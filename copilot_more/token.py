@@ -1,17 +1,29 @@
 import json
-from typing import Dict
+from typing import Dict, Optional
+from urllib.parse import urlparse
 
 from aiohttp import ClientSession
+from aiohttp_socks import ProxyConnector
 
 from copilot_more.logger import logger
 from copilot_more.account_manager import account_manager
-
 
 async def refresh_token_for_account(account) -> Dict:
     """Refresh token from GitHub Copilot API for a specific account."""
     logger.info("Attempting to refresh token for account")
 
-    async with ClientSession() as session:
+    connector = None
+    if account.proxy_config:
+        auth = None
+        if account.proxy_config.username:
+            auth = (account.proxy_config.username, account.proxy_config.password or '')
+            
+        connector = ProxyConnector.from_url(
+            f'socks5://{account.proxy_config.host}:{account.proxy_config.port}',
+            auth=auth
+        )
+
+    async with ClientSession(connector=connector) as session:
         async with session.get(
             url="https://api.github.com/copilot_internal/v2/token",
             headers={
@@ -31,7 +43,6 @@ async def refresh_token_for_account(account) -> Dict:
             logger.error(error_msg)
             raise ValueError(error_msg)
 
-
 async def get_cached_copilot_token() -> Dict:
     """Get a valid token from an account, refreshing if needed."""
     account = account_manager.get_next_usable_account()
@@ -48,7 +59,6 @@ async def get_cached_copilot_token() -> Dict:
     new_token = await refresh_token_for_account(account)
     account.update_access_token(new_token["token"], new_token["expires_at"])
     return new_token
-
 
 def handle_rate_limit_response(token: str):
     """Handle rate limit response by marking the account as rate-limited."""

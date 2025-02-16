@@ -1,24 +1,77 @@
-from dotenv import load_dotenv
+import json
 import os
-from typing import List
+from dataclasses import dataclass
+from typing import List, Optional, Dict
 
 from copilot_more.logger import logger
 
+@dataclass
+class ProxyConfig:
+    """Configuration for a SOCKS5 proxy."""
+    host: str
+    port: int
+    username: Optional[str] = None
+    password: Optional[str] = None
 
-def load_config() -> List[str]:
-    """Load configuration from environment variables."""
-    load_dotenv()
+@dataclass
+class AccountConfig:
+    """Configuration for a GitHub Copilot account."""
+    refresh_token: str
+    proxy: Optional[ProxyConfig] = None
 
-    refresh_tokens = os.getenv("REFRESH_TOKENS", "")
-    if not refresh_tokens:
-        logger.error("REFRESH_TOKENS environment variable is not set")
-        return []
+class Config:
+    """Main configuration class."""
+    def __init__(self, config_file: str = "config.json"):
+        self.config_file = config_file
+        self.refresh_tokens: List[AccountConfig] = []
+        self.request_timeout: int = 60  # default timeout
+        self.record_traffic: bool = False  # default record traffic setting
+        self._load_config()
 
-    tokens = [token.strip() for token in refresh_tokens.split(",") if token.strip()]
-    logger.info(f"Found {len(tokens)} refresh tokens in environment")
+    def _load_config(self) -> None:
+        """Load configuration from JSON file."""
+        try:
+            if not os.path.exists(self.config_file):
+                logger.error(f"Config file not found: {self.config_file}")
+                return
 
-    return tokens
+            with open(self.config_file, 'r') as f:
+                config_data = json.load(f)
 
+            # Load accounts configuration
+            accounts_data = config_data.get('refresh_tokens', [])
+            self.refresh_tokens = []
+            for account_data in accounts_data:
+                proxy_config = None
+                if "proxy" in account_data:
+                    proxy = account_data["proxy"]
+                    proxy_config = ProxyConfig(
+                        host=proxy["host"],
+                        port=proxy["port"],
+                        username=proxy.get("username"),
+                        password=proxy.get("password")
+                    )
+                self.refresh_tokens.append(
+                    AccountConfig(
+                        refresh_token=account_data["token"],
+                        proxy=proxy_config
+                    )
+                )
 
-# Load configuration once at module import
-refresh_tokens = load_config()
+            # Load other settings
+            self.request_timeout = config_data.get('request_timeout', 60)
+            self.record_traffic = config_data.get('record_traffic', False)
+
+            logger.info(f"Successfully loaded configuration with {len(self.refresh_tokens)} accounts")
+
+        except Exception as e:
+            logger.error(f"Error loading config: {e}")
+            raise
+
+# Create global config instance
+config = Config()
+
+# Export commonly used values
+account_configs = config.refresh_tokens
+request_timeout = config.request_timeout
+record_traffic = config.record_traffic

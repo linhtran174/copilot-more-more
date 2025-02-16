@@ -3,9 +3,10 @@ import threading
 import time
 from typing import Dict, List, Optional
 from dataclasses import dataclass
+from urllib.parse import quote
 
 from copilot_more.logger import logger
-from copilot_more.config import refresh_tokens
+from copilot_more.config import account_configs, ProxyConfig
 
 
 @dataclass
@@ -33,10 +34,30 @@ class AccessToken:
 class AccountInfo:
     """Manages a GitHub Copilot account's refresh and access tokens."""
 
-    def __init__(self, refresh_token: str):
+    def __init__(self, refresh_token: str, proxy_config: Optional[ProxyConfig] = None):
         self.refresh_token = refresh_token
         self.access_token: Optional[AccessToken] = None
+        self.proxy_config = proxy_config
         self.last_used = 0
+        
+    @property
+    def proxies(self) -> Optional[Dict[str, str]]:
+        """Get the proxy configuration in the format required by requests library."""
+        if not self.proxy_config:
+            return None
+            
+        auth = ""
+        if self.proxy_config.username:
+            auth = f"{quote(self.proxy_config.username)}"
+            if self.proxy_config.password:
+                auth += f":{quote(self.proxy_config.password)}"
+            auth += "@"
+            
+        proxy_url = f"socks5://{auth}{self.proxy_config.host}:{self.proxy_config.port}"
+        return {
+            "http": proxy_url,
+            "https": proxy_url
+        }
 
     def update_access_token(self, token: str, expires_at: int):
         """Update the account's access token."""
@@ -64,12 +85,12 @@ class AccountManager:
         self.current_index = 0
         self.lock = threading.Lock()
 
-    def add_account(self, refresh_token: str):
-        """Add a new account using its refresh token."""
+    def add_account(self, refresh_token: str, proxy_config: Optional[ProxyConfig] = None):
+        """Add a new account using its refresh token and optional proxy configuration."""
         with self.lock:
             # Check if account already exists
             if not any(acc.refresh_token == refresh_token for acc in self.accounts):
-                self.accounts.append(AccountInfo(refresh_token))
+                self.accounts.append(AccountInfo(refresh_token, proxy_config))
                 logger.info("Added new account to manager")
 
     def get_next_usable_account(self) -> Optional[AccountInfo]:
@@ -114,11 +135,11 @@ class AccountManager:
 account_manager = AccountManager()
 
 # Initialize accounts from config
-if not refresh_tokens:
-    logger.error("No refresh tokens available - accounts cannot be initialized")
+if not account_configs:
+    logger.error("No account configurations available - accounts cannot be initialized")
 else:
-    for token in refresh_tokens:
-        account_manager.add_account(token)
+    for config in account_configs:
+        account_manager.add_account(config.refresh_token, config.proxy)
     logger.info(f"Successfully initialized {len(account_manager.accounts)} accounts")
 
 if not account_manager.accounts:

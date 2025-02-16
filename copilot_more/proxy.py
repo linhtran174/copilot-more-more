@@ -15,11 +15,13 @@ from mitmproxy.io import FlowWriter
 from mitmproxy.options import Options
 from mitmproxy.tools.dump import DumpMaster
 
+from copilot_more.config import record_traffic
+
 # Configure logging
 logger = logging.getLogger(__name__)
 
 # Global state
-RECORD_TRAFFIC = os.getenv("RECORD_TRAFFIC", "").lower() in ("true", "1", "yes")
+RECORD_TRAFFIC = record_traffic
 proxy_thread: Optional[threading.Thread] = None
 proxy_url: Optional[str] = None
 proxy_controller: Optional[ProxyController] = None

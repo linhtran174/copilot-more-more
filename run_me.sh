@@ -32,10 +32,10 @@ Base Endpoints:
 Default Port: 15432
 
 Available Models:
-  - `gpt-4o`
-  - `claude-3.5-sonnet`
-  - `o1`
-  - `o1-mini`
+  - gpt-4o
+  - claude-3.5-sonnet
+  - o1
+  - o1-mini
 
 Authentication:
   - Bearer token required (automatically managed)
@@ -66,18 +66,24 @@ if ! check_poetry; then
 fi
 
 # Check if .env file exists
-if [ ! -f .env ]; then
-    echo "No .env file found. Running init.sh to generate tokens..."
+if [ ! -f config.json ]; then
+    echo "No config.json file found. Running init.sh to generate tokens..."
     bash init.sh
 fi
 
 # Install dependencies
 echo "Installing dependencies..."
+poetry lock
 poetry install
 
 # Print API information
 print_api_info
 
 # Start the server
-echo "Starting the server..."
-poetry run uvicorn copilot_more.server:app --port 15432
+if [ "$1" == "--debug" ]; then
+    echo "Starting server in debug mode..."
+    poetry run python -m debugpy --listen 0.0.0.0:5678 --wait-for-client -m uvicorn copilot_more.server:app --port 15432 --reload
+else
+    echo "Starting the server..."
+    poetry run uvicorn copilot_more.server:app --port 15432
+fi

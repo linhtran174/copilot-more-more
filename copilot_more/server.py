@@ -1,6 +1,5 @@
 import json
 import asyncio
-import os
 
 from aiohttp import ClientSession, ClientTimeout, TCPConnector
 from fastapi import FastAPI, HTTPException, Request
@@ -8,12 +7,11 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 
 from copilot_more.logger import logger
+from copilot_more.config import request_timeout
 from copilot_more.proxy import RECORD_TRAFFIC, get_proxy_url, initialize_proxy
 from copilot_more.token import get_cached_copilot_token, handle_rate_limit_response
 from copilot_more.utils import StringSanitizer
-from dotenv import load_dotenv
 
-load_dotenv()
 sanitizer = StringSanitizer()
 
 initialize_proxy()
@@ -32,7 +30,7 @@ CHAT_COMPLETIONS_API_ENDPOINT = (
     "https://api.individual.githubcopilot.com/chat/completions"
 )
 MODELS_API_ENDPOINT = "https://api.individual.githubcopilot.com/models"
-TIMEOUT = ClientTimeout(total=int(os.getenv("REQUEST_TIMEOUT")))  # 10 seconds timeout
+TIMEOUT = ClientTimeout(total=request_timeout)  # Default timeout from config
 MAX_TOKENS = 10240
 
 

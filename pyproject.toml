@@ -7,11 +7,12 @@ readme = "README.md"
 
 [tool.poetry.dependencies]
 python = "^3.12"
+debugpy = "^1.8.0"
 fastapi = "^0.115.5"
 uvicorn = "^0.32.1"
 aiohttp = "^3.11.8"
 mitmproxy = "^11.0.2"
-python-dotenv = "^1.0.0"
+aiohttp-socks = "^0.10.1"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^8.3.4"
