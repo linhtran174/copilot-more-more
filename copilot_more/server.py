@@ -1,4 +1,6 @@
 import json
+import asyncio
+import os
 
 from aiohttp import ClientSession, ClientTimeout, TCPConnector
 from fastapi import FastAPI, HTTPException, Request
@@ -7,9 +9,11 @@ from fastapi.responses import StreamingResponse
 
 from copilot_more.logger import logger
 from copilot_more.proxy import RECORD_TRAFFIC, get_proxy_url, initialize_proxy
-from copilot_more.token import get_cached_copilot_token
+from copilot_more.token import get_cached_copilot_token, handle_rate_limit_response
 from copilot_more.utils import StringSanitizer
+from dotenv import load_dotenv
 
+load_dotenv()
 sanitizer = StringSanitizer()
 
 initialize_proxy()
@@ -24,19 +28,16 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-
 CHAT_COMPLETIONS_API_ENDPOINT = (
     "https://api.individual.githubcopilot.com/chat/completions"
 )
 MODELS_API_ENDPOINT = "https://api.individual.githubcopilot.com/models"
-TIMEOUT = ClientTimeout(total=300)
+TIMEOUT = ClientTimeout(total=int(os.getenv("REQUEST_TIMEOUT")))  # 10 seconds timeout
 MAX_TOKENS = 10240
 
 
 def preprocess_request_body(request_body: dict) -> dict:
-    """
-    Preprocess the request body to handle array content in messages.
-    """
+    """Preprocess the request body to handle array content in messages."""
     if not request_body.get("messages"):
         return request_body
 
@@ -78,7 +79,6 @@ def preprocess_request_body(request_body: dict) -> dict:
     return {**request_body, "messages": processed_messages, "max_tokens": max_tokens}
 
 
-# o1 models only support non-streaming responses, we need to convert them to standard streaming format
 def convert_o1_response(data: dict) -> dict:
     """Convert o1 model response format to standard format"""
     if "choices" not in data:
@@ -125,18 +125,21 @@ async def create_client_session() -> ClientSession:
 
 @app.get("/models")
 async def list_models():
-    """
-    Proxies models request.
-    """
+    """Proxies models request."""
     try:
-        token = await get_cached_copilot_token()
+        try:
+            token = await get_cached_copilot_token()
+        except ValueError as e:
+            logger.error(f"Failed to get token: {str(e)}")
+            raise HTTPException(503, "Service unavailable: No usable tokens available")
+
         session = await create_client_session()
         async with session as s:
             kwargs = {
                 "headers": {
                     "Authorization": f"Bearer {token['token']}",
                     "Content-Type": "application/json",
-                    "editor-version": "vscode/1.95.3"
+                    "editor-version": "vscode/1.95.3",
                 }
             }
             if RECORD_TRAFFIC:
@@ -148,7 +151,13 @@ async def list_models():
                     raise HTTPException(
                         response.status, f"Models API error: {error_message}"
                     )
-                return await response.json()
+                response_data = await response.json()
+                logger.info(
+                    f"Models API response: {json.dumps(response_data, indent=2)}"
+                )
+                return response_data
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Error fetching models: {str(e)}")
         raise HTTPException(500, f"Error fetching models: {str(e)}")
@@ -156,12 +165,16 @@ async def list_models():
 
 @app.post("/chat/completions")
 async def proxy_chat_completions(request: Request):
-    """
-    Proxies chat completion requests with SSE support.
-    """
+    """Proxies chat completion requests with SSE support."""
     request_body = await request.json()
 
-    logger.info(f"Received request: {json.dumps(request_body, indent=2)}")
+    # Filter out system messages from the log while preserving the original request
+    log_request = request_body.copy()
+    if "messages" in log_request:
+        log_request["messages"] = [
+            msg for msg in log_request["messages"] if msg["role"] != "system"
+        ]
+    logger.info(f"Received request: {json.dumps(log_request, indent=2)}")
 
     try:
         request_body = preprocess_request_body(request_body)
@@ -171,49 +184,121 @@ async def proxy_chat_completions(request: Request):
         raise HTTPException(400, f"Error preprocessing request: {str(e)}")
 
     async def stream_response():
-        try:
-            token = await get_cached_copilot_token()
-            model = request_body.get("model", "")
-            is_streaming = request_body.get("stream", False)
+        max_retries = 3
+        retry_count = 0
 
-            session = await create_client_session()
-            async with session as s:
-                kwargs = {
-                    "json": request_body,
-                    "headers": {
-                        "Authorization": f"Bearer {token['token']}",
-                        "Content-Type": "application/json",
-                        "Accept": "text/event-stream",
-                        "editor-version": "vscode/1.95.3",
-                    },
-                }
-                if RECORD_TRAFFIC:
-                    kwargs["proxy"] = get_proxy_url()
-                async with s.post(CHAT_COMPLETIONS_API_ENDPOINT, **kwargs) as response:
-                    if response.status != 200:
-                        error_message = await response.text()
-                        logger.error(f"API error: {error_message}")
-                        raise HTTPException(
-                            response.status, f"API error: {error_message}"
-                        )
+        while retry_count < max_retries:
+            try:
+                try:
+                    token = await get_cached_copilot_token()
+                except ValueError as e:
+                    logger.error(f"Failed to get token: {str(e)}")
+                    yield json.dumps(
+                        {"error": "No usable tokens available - service unavailable"}
+                    ).encode("utf-8")
+                    return
 
-                    if model.startswith("o1") and is_streaming:
-                        # For o1 models with streaming, read entire response and convert to SSE
-                        data = await response.json()
-                        converted_data = convert_o1_response(data)
-                        for event in convert_to_sse_events(converted_data):
-                            yield event.encode("utf-8")
-                    else:
-                        # For other cases, stream chunks directly
-                        async for chunk in response.content.iter_chunks():
-                            if chunk:
-                                yield chunk[0]
+                model = request_body.get("model", "")
+                is_streaming = request_body.get("stream", False)
 
-        except Exception as e:
-            logger.error(f"Error in stream_response: {str(e)}")
-            yield json.dumps({"error": str(e)}).encode("utf-8")
+                session = await create_client_session()
+                async with session as s:
+                    kwargs = {
+                        "json": request_body,
+                        "headers": {
+                            "Authorization": f"Bearer {token['token']}",
+                            "Content-Type": "application/json",
+                            "Accept": "text/event-stream",
+                            "editor-version": "vscode/1.95.3",
+                        },
+                    }
+                    if RECORD_TRAFFIC:
+                        kwargs["proxy"] = get_proxy_url()
+                    async with s.post(
+                        CHAT_COMPLETIONS_API_ENDPOINT, **kwargs
+                    ) as response:
+                        if response.status == 429:  # Rate limit error
+                            error_message = await response.text()
+                            logger.warning(f"Rate limit hit: {error_message}")
+                            handle_rate_limit_response(token["token"])
+                            retry_count += 1
+                            if retry_count < max_retries:
+                                logger.info(
+                                    f"Retrying request with a new token (attempt {retry_count + 1}/{max_retries})"
+                                )
+                                continue
+                            else:
+                                logger.error(
+                                    "All available tokens are rate limited - no more retries"
+                                )
+                                raise HTTPException(429, "All tokens are rate limited")
+                        elif response.status != 200:
+                            error_message = await response.text()
+                            logger.error(f"API error: {error_message}")
+                            if (
+                                "rate" in error_message.lower()
+                            ):  # Check for rate limit in error message
+                                logger.warning(
+                                    f"Rate limit detected in error: {error_message}"
+                                )
+                                handle_rate_limit_response(token["token"])
+                                retry_count += 1
+                                if retry_count < max_retries:
+                                    logger.info(
+                                        f"Retrying request with a new token (attempt {retry_count + 1}/{max_retries})"
+                                    )
+                                    continue
+                            raise HTTPException(
+                                response.status, f"API error: {error_message}"
+                            )
 
-    return StreamingResponse(
-        stream_response(),
-        media_type="text/event-stream",
-    )
+                        if model.startswith("o1") and is_streaming:
+                            # For o1 models with streaming, read entire response and convert to SSE
+                            data = await response.json()
+                            converted_data = convert_o1_response(data)
+                            for event in convert_to_sse_events(converted_data):
+                                yield event.encode("utf-8")
+                        else:
+                            # For other cases, stream chunks directly
+                            async for chunk in response.content.iter_chunks():
+                                if chunk:
+                                    chunk_data = chunk[0].decode("utf-8")
+                                    # Log chunks that contain response data
+                                    if (
+                                        "content" in chunk_data
+                                        and not chunk_data.startswith("data: [DONE]")
+                                    ):
+                                        try:
+                                            parsed = json.loads(
+                                                chunk_data.replace("data: ", "")
+                                            )
+                                            if (
+                                                "choices" in parsed
+                                                and parsed["choices"]
+                                            ):
+                                                content = (
+                                                    parsed["choices"][0]
+                                                    .get("delta", {})
+                                                    .get("content")
+                                                )
+                                                if content:
+                                                    logger.info(
+                                                        f"API Response content: {content}"
+                                                    )
+                                        except json.JSONDecodeError:
+                                            pass
+                                    yield chunk[0]
+                logger.info("Successfully processed chat completion request")
+                return  # Successfully processed request
+            except Exception as e:
+                if isinstance(e, asyncio.TimeoutError):
+                    logger.error("Request timed out")
+                    yield json.dumps(
+                        {"error": "Request timed out after 10 seconds"}
+                    ).encode("utf-8")
+                else:
+                    logger.error(f"Error in stream_response: {str(e)}")
+                    yield json.dumps({"error": str(e)}).encode("utf-8")
+                return
+
+    return StreamingResponse(stream_response(), media_type="text/event-stream")

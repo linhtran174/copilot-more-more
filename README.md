@@ -1,8 +1,6 @@
 # copilot-more
 
-`copilot-more` maximizes the value of your GitHub Copilot subscription by exposing models like gpt-4o and Claude-3.5-Sonnet for use in agentic coding tools such as Cline, or any tool that supports bring-your-own-model setups. Unlike costly pay-as-you-go APIs, this approach lets you leverage these powerful models affordably. (Yes, $10 per month maximum.)
-
-The exposed models aren't limited to coding tasks—you can connect any AI client and customize parameters like temperature, context window length, and more.
+`copilot-more-more` is a fork of `copilot-more` that allows routing between multiple accounts, which each account owning a separate proxy to prevent IP-ban. This is useful if you want to use more than the rate-limit for certain model
 
 ## Ethical Use
 - Respect the GitHub Copilot terms of service.
@@ -11,6 +9,7 @@ The exposed models aren't limited to coding tasks—you can connect any AI clien
 
 
 ## 🏃‍♂️ How to Run
+TLDR: `bash run_me.sh`
 
 1. Get the refresh token
 

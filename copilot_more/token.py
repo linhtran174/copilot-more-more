@@ -1,70 +1,21 @@
-import os
-import queue
-import threading
-import time
-from typing import Optional
+import json
+from typing import Dict
 
 from aiohttp import ClientSession
 
 from copilot_more.logger import logger
-
-# Global variables for token caching
-# {"token": "xxx", "expires_at": 1732767035}
-CACHED_COPILOT_TOKEN: Optional[dict] = None
-TOKEN_LOCK = threading.Lock()
-TOKEN_CACHE_QUEUE: queue.Queue = queue.Queue(maxsize=1)
+from copilot_more.account_manager import account_manager
 
 
-def cache_copilot_token(token_data: dict) -> None:
-    logger.info("Caching token")
-    global CACHED_COPILOT_TOKEN
-    with TOKEN_LOCK:
-        logger.debug(
-            f"Caching new token that expires at {token_data.get('expires_at')}"
-        )
-        CACHED_COPILOT_TOKEN = token_data
-        try:
-            TOKEN_CACHE_QUEUE.get_nowait()
-        except queue.Empty:
-            pass
-        TOKEN_CACHE_QUEUE.put(token_data)
-        logger.debug("Token cached successfully")
-
-
-async def get_cached_copilot_token() -> dict:
-    global CACHED_COPILOT_TOKEN
-    with TOKEN_LOCK:
-        current_time = time.time()
-        if CACHED_COPILOT_TOKEN:
-            expires_at = CACHED_COPILOT_TOKEN.get("expires_at", 0)
-            logger.info(
-                f"Current token expires at {expires_at}, current time is {current_time}"
-            )
-
-        if (
-            CACHED_COPILOT_TOKEN
-            and CACHED_COPILOT_TOKEN.get("expires_at", 0) > time.time() + 300
-        ):
-            logger.info("Using cached token")
-            return CACHED_COPILOT_TOKEN
-
-    logger.info("Token expired or not found, refreshing...")
-    new_token = await refresh_token()
-    cache_copilot_token(new_token)
-    return new_token
-
-
-async def refresh_token() -> dict:
-    logger.info("Attempting to refresh token")
-    if os.getenv("REFRESH_TOKEN") is None:
-        logger.error("REFRESH_TOKEN environment variable is not set")
-        raise ValueError("REFRESH_TOKEN environment variable is not set.")
+async def refresh_token_for_account(account) -> Dict:
+    """Refresh token from GitHub Copilot API for a specific account."""
+    logger.info("Attempting to refresh token for account")
 
     async with ClientSession() as session:
         async with session.get(
             url="https://api.github.com/copilot_internal/v2/token",
             headers={
-                "Authorization": "token " + (os.getenv("REFRESH_TOKEN") or ""),
+                "Authorization": f"token {account.refresh_token}",
                 "editor-version": "vscode/1.95.3",
             },
         ) as response:
@@ -79,3 +30,26 @@ async def refresh_token() -> dict:
             )
             logger.error(error_msg)
             raise ValueError(error_msg)
+
+
+async def get_cached_copilot_token() -> Dict:
+    """Get a valid token from an account, refreshing if needed."""
+    account = account_manager.get_next_usable_account()
+    if not account:
+        raise ValueError("No usable accounts available")
+
+    if account.access_token and account.access_token.is_valid():
+        return {
+            "token": account.access_token.token,
+            "expires_at": account.access_token.expires_at,
+        }
+
+    logger.info("Getting fresh token for account...")
+    new_token = await refresh_token_for_account(account)
+    account.update_access_token(new_token["token"], new_token["expires_at"])
+    return new_token
+
+
+def handle_rate_limit_response(token: str):
+    """Handle rate limit response by marking the account as rate-limited."""
+    account_manager.handle_rate_limit(token)

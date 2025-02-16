@@ -50,9 +50,34 @@ class CopilotProxy:
         if self._is_copilot_request(flow.request.pretty_url):
             ctx.log.info(f"Captured request to: {flow.request.pretty_url}")
 
+    def _is_cline_format(self, response_content: bytes) -> bool:
+        """Check if response matches Cline message format."""
+        try:
+            content = response_content.decode('utf-8')
+            if not content:
+                return False
+                
+            # Check for basic Cline message structure
+            return (
+                '"choices"' in content and 
+                ('"message"' in content or '"delta"' in content)
+            )
+        except UnicodeDecodeError:
+            return False
+
     def response(self, flow: http.HTTPFlow) -> None:
         if self._is_copilot_request(flow.request.pretty_url):
             self._sanitize_headers(flow)  # Sanitize before saving
+            
+            # Log if response doesn't match Cline format
+            if not self._is_cline_format(flow.response.content):
+                logger.warning(
+                    f"Non-Cline format response from {flow.request.pretty_url}\n"
+                    f"Status: {flow.response.status_code}\n"
+                    f"Headers: {dict(flow.response.headers)}\n"
+                    f"Content: {flow.response.content[:1000]!r}"  # Log first 1000 bytes
+                )
+                
             self.w.add(flow)
 
     def done(self):
