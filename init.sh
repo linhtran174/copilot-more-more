@@ -3,7 +3,7 @@
 # Client ID for the vscode copilot
 client_id="01ab8ac9400c4e429b23" 
 
-echo "How many tokens do you want to generate? (Enter a number)"
+echo "How many accounts do you want to add? (Enter a number)"
 read token_count
 
 # Initialize config object with defaults if config.json doesn't exist
@@ -11,7 +11,7 @@ if [ -f "config.json" ]; then
     config=$(cat config.json)
 else
     config='{
-        "refresh_tokens": [],
+        "accounts": [],
         "request_timeout": 100,
         "record_traffic": true
     }'
@@ -37,13 +37,26 @@ for ((i=1; i<=token_count; i++)); do
 
     access_token=$(echo "$response_access_token" | grep -oE 'access_token=[^&]+' | cut -d '=' -f 2)
     
-    # Add new token to config using jq
-    config=$(echo "$config" | jq --arg token "$access_token" '.refresh_tokens += [{"token": $token}]')
+    # Generate random ID and password
+    random_id="user$(openssl rand -hex 4)"
+    random_password="pass$(openssl rand -hex 8)"
+    
+    # Add new account to config using jq
+    config=$(echo "$config" | jq --arg token "$access_token" \
+                               --arg id "$random_id" \
+                               --arg pass "$random_password" \
+                               '.accounts += [{
+                                   "id": $id,
+                                   "password": $pass,
+                                   "token": $token
+                               }]')
     
     echo "Token $i generated successfully!"
+    echo "Generated account ID: $random_id"
+    echo "Generated password: $random_password"
     
     if [ $i -lt $token_count ]; then
-        echo -e "\nPreparing to generate next token..."
+        echo -e "\nPreparing to add next account..."
     fi
 done
 

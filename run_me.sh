@@ -36,16 +36,6 @@ Available Models:
   - claude-3.5-sonnet
   - o1
   - o1-mini
-
-Authentication:
-  - Bearer token required (automatically managed)
-  - Multiple tokens supported with round-robin rotation
-  - Automatic rate limit handling
-
-Usage:
-  1. Set REFRESH_TOKEN in .env file
-  2. Server runs on http://localhost:15432
-  3. Use standard OpenAI API format for requests
 =====================================
 "
 }
