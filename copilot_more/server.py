@@ -299,9 +299,11 @@ async def proxy_chat_completions(request: Request):
                                     )
                                     continue
                             elif (
-                                "unauthorized" in error_message.lower()
+                                response.status == 400
+                                or "unauthorized" in error_message.lower()
                                 or "forbidden" in error_message.lower()
                                 or "token" in error_message.lower()
+                                or "model not found" in error_message.lower()
                             ):
                                 # Try to refresh token on authorization errors
                                 logger.warning(
