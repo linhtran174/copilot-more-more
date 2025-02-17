@@ -14,14 +14,14 @@ async def refresh_token_for_account(account) -> Dict:
 
     connector = None
     if account.proxy_config:
-        auth = None
-        if account.proxy_config.username:
-            auth = (account.proxy_config.username, account.proxy_config.password or '')
-            
-        connector = ProxyConnector.from_url(
-            f'socks5://{account.proxy_config.host}:{account.proxy_config.port}',
-            auth=auth
-        )
+        if account.proxy_config.username and account.proxy_config.password:
+            connector = ProxyConnector.from_url(
+                f'socks5://{account.proxy_config.username}:{account.proxy_config.password}@{account.proxy_config.host}:{account.proxy_config.port}'
+            )
+        else:
+            connector = ProxyConnector.from_url(
+                f'socks5://{account.proxy_config.host}:{account.proxy_config.port}'
+            )
 
     async with ClientSession(connector=connector) as session:
         async with session.get(

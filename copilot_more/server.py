@@ -133,16 +133,13 @@ async def list_models():
 
         session = await create_client_session()
         async with session as s:
-            kwargs = {
-                "headers": {
-                    "Authorization": f"Bearer {token['token']}",
-                    "Content-Type": "application/json",
-                    "editor-version": "vscode/1.95.3",
-                }
+            headers = {
+                "Authorization": f"Bearer {token['token']}",
+                "Content-Type": "application/json",
+                "editor-version": "vscode/1.95.3",
             }
-            if RECORD_TRAFFIC:
-                kwargs["proxy"] = get_proxy_url()
-            async with s.get(MODELS_API_ENDPOINT, **kwargs) as response:
+            proxy = get_proxy_url() if RECORD_TRAFFIC else None
+            async with s.get(MODELS_API_ENDPOINT, headers=headers, proxy=proxy) as response:
                 if response.status != 200:
                     error_message = await response.text()
                     logger.error(f"Models API error: {error_message}")
@@ -201,19 +198,18 @@ async def proxy_chat_completions(request: Request):
 
                 session = await create_client_session()
                 async with session as s:
-                    kwargs = {
-                        "json": request_body,
-                        "headers": {
-                            "Authorization": f"Bearer {token['token']}",
-                            "Content-Type": "application/json",
-                            "Accept": "text/event-stream",
-                            "editor-version": "vscode/1.95.3",
-                        },
+                    headers = {
+                        "Authorization": f"Bearer {token['token']}",
+                        "Content-Type": "application/json",
+                        "Accept": "text/event-stream",
+                        "editor-version": "vscode/1.95.3",
                     }
-                    if RECORD_TRAFFIC:
-                        kwargs["proxy"] = get_proxy_url()
+                    proxy = get_proxy_url() if RECORD_TRAFFIC else None
                     async with s.post(
-                        CHAT_COMPLETIONS_API_ENDPOINT, **kwargs
+                        CHAT_COMPLETIONS_API_ENDPOINT,
+                        json=request_body,
+                        headers=headers,
+                        proxy=proxy
                     ) as response:
                         if response.status == 429:  # Rate limit error
                             error_message = await response.text()

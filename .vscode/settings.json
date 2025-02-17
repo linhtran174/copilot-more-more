@@ -1,0 +1,10 @@
+{
+    "python.defaultInterpreterPath": "/home/linh/.cache/pypoetry/virtualenvs/copilot-more-9fB4EB5_-py3.12/bin/python",
+    "python.analysis.extraPaths": [
+        "${workspaceFolder}"
+    ],
+    "python.analysis.indexing": true,
+    "python.analysis.autoSearchPaths": true,
+    "python.analysis.diagnosticMode": "workspace",
+    "python.analysis.typeCheckingMode": "basic"
+}

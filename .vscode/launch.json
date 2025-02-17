@@ -1,0 +1,19 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Python: Copilot More Server", 
+            "type": "python",
+            "request": "launch",
+            "module": "uvicorn",
+            "args": [
+                "copilot_more.server:app",
+                "--port", "15432",
+                "--reload"
+            ],
+            "env": {
+                "PYTHONPATH": "${workspaceFolder}"
+            }
+        }
+    ]
+}
