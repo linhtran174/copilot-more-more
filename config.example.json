@@ -1,12 +1,15 @@
 {
-  "refresh_tokens": [
+  "accounts": [
     {
+      "id": "user1",
+      "password": "user1_password",
       "token": "gho_xxxxxxxxxxxxxxxxxxxxxxx"
     },
     {
+      "id": "user2",
+      "password": "user2_password",
       "token": "gho_yyyyyyyyyyyyyyyyyyyyyyy",
       "proxy": {
-        "type": "socks5",
         "host": "proxy.example.com",
         "port": 1080,
         "username": "proxy_user",
@@ -15,5 +18,6 @@
     }
   ],
   "request_timeout": 100,
-  "record_traffic": true
+  "record_traffic": true,
+  "token_refresh_interval": 3600
 }

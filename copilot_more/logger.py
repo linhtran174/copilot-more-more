@@ -3,15 +3,15 @@ import os
 from pathlib import Path
 
 # Create logs directory if it doesn't exist
-log_dir = Path('logs')
+log_dir = Path("logs")
 log_dir.mkdir(exist_ok=True)
 
 # Configure logging
-log_format = '%(asctime)s - %(levelname)s - %(message).200s'
+log_format = "%(asctime)s - %(levelname)s - %(message).200s"
 formatter = logging.Formatter(log_format)
 
 # File handler
-file_handler = logging.FileHandler('logs/app.log')
+file_handler = logging.FileHandler("logs/app.log")
 file_handler.setFormatter(formatter)
 file_handler.setLevel(logging.INFO)
 

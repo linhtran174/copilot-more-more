@@ -1,12 +1,12 @@
 import json
 import threading
 import time
-from typing import Dict, List, Optional
 from dataclasses import dataclass
+from typing import Dict, List, Optional
 from urllib.parse import quote
 
+from copilot_more.config import ProxyConfig, account_configs
 from copilot_more.logger import logger
-from copilot_more.config import account_configs, ProxyConfig
 
 
 @dataclass
@@ -16,7 +16,7 @@ class AccessToken:
     token: str
     expires_at: int
     rate_limited_until: int = 0
-    last_used: float = 0
+    last_used: int = 0
 
     def is_valid(self) -> bool:
         """Check if token is not expired (with 5 minute buffer)."""
@@ -28,41 +28,48 @@ class AccessToken:
 
     def mark_rate_limited(self, duration: int = 60):
         """Mark token as rate limited for the specified duration."""
-        self.rate_limited_until = time.time() + duration
+        self.rate_limited_until = int(time.time()) + duration
 
 
 class AccountInfo:
     """Manages a GitHub Copilot account's refresh and access tokens."""
 
-    def __init__(self, refresh_token: str, proxy_config: Optional[ProxyConfig] = None):
+    def __init__(
+        self,
+        id: str,
+        password: str,
+        refresh_token: str,
+        proxy_config: Optional[ProxyConfig] = None,
+    ):
+        self.id = id
+        self.password = password
         self.refresh_token = refresh_token
         self.access_token: Optional[AccessToken] = None
         self.proxy_config = proxy_config
         self.last_used = 0
-        
+
     @property
     def proxies(self) -> Optional[Dict[str, str]]:
         """Get the proxy configuration in the format required by requests library."""
         if not self.proxy_config:
             return None
-            
+
         auth = ""
         if self.proxy_config.username:
             auth = f"{quote(self.proxy_config.username)}"
             if self.proxy_config.password:
                 auth += f":{quote(self.proxy_config.password)}"
             auth += "@"
-            
+
         proxy_url = f"socks5://{auth}{self.proxy_config.host}:{self.proxy_config.port}"
-        return {
-            "http": proxy_url,
-            "https": proxy_url
-        }
+        return {"http": proxy_url, "https": proxy_url}
 
     def update_access_token(self, token: str, expires_at: int):
         """Update the account's access token."""
         self.access_token = AccessToken(token, expires_at)
-        logger.info(f"Updated access token for account, expires at {expires_at}")
+        logger.info(
+            f"Updated access token for account {self.id}, expires at {expires_at}"
+        )
 
     def is_usable(self) -> bool:
         """Check if the account has a valid, non-rate-limited access token."""
@@ -74,7 +81,9 @@ class AccountInfo:
         """Mark the account's current access token as rate limited."""
         if self.access_token:
             self.access_token.mark_rate_limited(duration)
-            logger.warning(f"Account marked as rate limited for {duration} seconds")
+            logger.warning(
+                f"Account {self.id} marked as rate limited for {duration} seconds"
+            )
 
 
 class AccountManager:
@@ -85,13 +94,21 @@ class AccountManager:
         self.current_index = 0
         self.lock = threading.Lock()
 
-    def add_account(self, refresh_token: str, proxy_config: Optional[ProxyConfig] = None):
-        """Add a new account using its refresh token and optional proxy configuration."""
+    def add_account(
+        self,
+        id: str,
+        password: str,
+        refresh_token: str,
+        proxy_config: Optional[ProxyConfig] = None,
+    ):
+        """Add a new account using its id, password, refresh token and optional proxy configuration."""
         with self.lock:
             # Check if account already exists
             if not any(acc.refresh_token == refresh_token for acc in self.accounts):
-                self.accounts.append(AccountInfo(refresh_token, proxy_config))
-                logger.info("Added new account to manager")
+                self.accounts.append(
+                    AccountInfo(id, password, refresh_token, proxy_config)
+                )
+                logger.info(f"Added new account {id} to manager")
 
     def get_next_usable_account(self) -> Optional[AccountInfo]:
         """Get the next account that can be used, in round-robin fashion."""
@@ -104,7 +121,7 @@ class AccountManager:
                 current_account = self.accounts[self.current_index]
 
                 if current_account.is_usable():
-                    current_account.last_used = time.time()
+                    current_account.last_used = int(time.time())
                     # Only increment index after finding a usable account
                     self.current_index = (self.current_index + 1) % len(self.accounts)
                     return current_account
@@ -139,7 +156,12 @@ if not account_configs:
     logger.error("No account configurations available - accounts cannot be initialized")
 else:
     for config in account_configs:
-        account_manager.add_account(config.refresh_token, config.proxy)
+        account_manager.add_account(
+            id=config.id,
+            password=config.password,
+            refresh_token=config.token,
+            proxy_config=config.proxy,
+        )
     logger.info(f"Successfully initialized {len(account_manager.accounts)} accounts")
 
 if not account_manager.accounts:

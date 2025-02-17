@@ -15,6 +15,7 @@ from mitmproxy.io import FlowWriter
 from mitmproxy.options import Options
 from mitmproxy.tools.dump import DumpMaster
 
+from copilot_more.account_manager import account_manager
 from copilot_more.config import record_traffic
 
 # Configure logging
@@ -30,10 +31,18 @@ proxy_shutdown_complete = threading.Event()
 
 class CopilotProxy:
     def __init__(self, dump_file: str | None = None):
-        self.dump_file = (
-            dump_file
-            or f"copilot_traffic_{datetime.now().strftime('%Y%m%d_%H%M%S')}.mitm"
-        )
+        # Ensure logs directory exists
+        log_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "logs")
+        os.makedirs(log_dir, exist_ok=True)
+
+        if dump_file:
+            self.dump_file = os.path.join(log_dir, os.path.basename(dump_file))
+        else:
+            self.dump_file = os.path.join(
+                log_dir,
+                f"copilot_traffic_{datetime.now().strftime('%Y%m%d_%H%M%S')}.mitm",
+            )
+
         self.f = open(self.dump_file, "wb")
         self.w = FlowWriter(self.f)
         self.copilot_urls = (
@@ -50,36 +59,77 @@ class CopilotProxy:
 
     def request(self, flow: http.HTTPFlow) -> None:
         if self._is_copilot_request(flow.request.pretty_url):
-            ctx.log.info(f"Captured request to: {flow.request.pretty_url}")
+            # Initialize metadata if needed
+            if not hasattr(flow, "metadata"):
+                flow.metadata = {}
 
-    def _is_cline_format(self, response_content: bytes) -> bool:
+            # Extract token and get account ID
+            auth_header = flow.request.headers.get("Authorization", "")
+            token = (
+                auth_header.replace("Bearer ", "")
+                if auth_header.startswith("Bearer ")
+                else ""
+            )
+            account = account_manager.get_account_by_token(token) if token else None
+            account_id = account.id if account else "unknown"
+
+            ctx.log.info(
+                f"Request to {flow.request.pretty_url} using account: {account_id}"
+            )
+            # Store account ID in flow metadata for use in response
+            flow.metadata["account_id"] = account_id
+
+    def _is_cline_format(self, response_content: bytes | None) -> bool:
         """Check if response matches Cline message format."""
+        if not response_content:
+            return False
+
         try:
-            content = response_content.decode('utf-8')
+            content = response_content.decode("utf-8")
             if not content:
                 return False
-                
+
             # Check for basic Cline message structure
-            return (
-                '"choices"' in content and 
-                ('"message"' in content or '"delta"' in content)
+            return '"choices"' in content and (
+                '"message"' in content or '"delta"' in content
             )
         except UnicodeDecodeError:
             return False
 
     def response(self, flow: http.HTTPFlow) -> None:
         if self._is_copilot_request(flow.request.pretty_url):
-            self._sanitize_headers(flow)  # Sanitize before saving
-            
-            # Log if response doesn't match Cline format
-            if not self._is_cline_format(flow.response.content):
-                logger.warning(
-                    f"Non-Cline format response from {flow.request.pretty_url}\n"
-                    f"Status: {flow.response.status_code}\n"
-                    f"Headers: {dict(flow.response.headers)}\n"
-                    f"Content: {flow.response.content[:1000]!r}"  # Log first 1000 bytes
+            # Get status and determine if request was successful
+            status = flow.response.status_code if flow.response else "No response"
+            success = 200 <= status < 300 if isinstance(status, int) else False
+
+            # Log request outcome with token information
+            account_id = flow.metadata.get("account_id", "unknown")
+            ctx.log.info(
+                f"Request to {flow.request.pretty_url} using account {account_id}: "
+                f"{'Success' if success else 'Failed'} (Status: {status})"
+            )
+
+            # Additional logging for non-Cline format responses
+            if (
+                flow.response
+                and flow.response.content
+                and not self._is_cline_format(flow.response.content)
+            ):
+                headers = dict(flow.response.headers) if flow.response else {}
+                content = (
+                    flow.response.content[:1000]
+                    if flow.response and flow.response.content
+                    else b""
                 )
-                
+                logger.warning(
+                    f"Non-Cline format response (Account: {account_id})\n"
+                    f"URL: {flow.request.pretty_url}\n"
+                    f"Status: {status}\n"
+                    f"Headers: {headers}\n"
+                    f"Content: {content!r}"
+                )
+
+            self._sanitize_headers(flow)  # Sanitize before saving
             self.w.add(flow)
 
     def done(self):
