@@ -39,21 +39,16 @@ for ((i=1; i<=token_count; i++)); do
     
     # Generate random ID and password
     random_id="user$(openssl rand -hex 4)"
-    random_password="pass$(openssl rand -hex 8)"
     
     # Add new account to config using jq
     config=$(echo "$config" | jq --arg token "$access_token" \
                                --arg id "$random_id" \
-                               --arg pass "$random_password" \
                                '.accounts += [{
                                    "id": $id,
-                                   "password": $pass,
                                    "token": $token
                                }]')
     
     echo "Token $i generated successfully!"
-    echo "Generated account ID: $random_id"
-    echo "Generated password: $random_password"
     
     if [ $i -lt $token_count ]; then
         echo -e "\nPreparing to add next account..."
