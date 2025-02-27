@@ -1,13 +1,13 @@
 # credentals
 config.json
-config.tmp
+node_modules
+logs
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
 *$py.class
 
-logs/
 
 # Distribution / packaging
 .Python
