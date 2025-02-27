@@ -1,20 +1,22 @@
 import json
 import asyncio
+import traceback
 
 from aiohttp import ClientSession, ClientTimeout, TCPConnector
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 
+from copilot_more.account_manager import account_manager
 from copilot_more.logger import logger
 from copilot_more.config import request_timeout
-from copilot_more.proxy import RECORD_TRAFFIC, get_proxy_url, initialize_proxy
-from copilot_more.token import get_cached_copilot_token, handle_rate_limit_response
+# from copilot_more.proxy import RECORD_TRAFFIC, get_proxy_url, initialize_proxy
+from copilot_more.proxy import RECORD_TRAFFIC, get_proxy_url
 from copilot_more.utils import StringSanitizer
 
 sanitizer = StringSanitizer()
 
-initialize_proxy()
+# initialize_proxy()
 
 app = FastAPI()
 
@@ -115,23 +117,18 @@ def convert_to_sse_events(data: dict) -> list[str]:
     events.append("data: [DONE]\n\n")
     return events
 
-
-async def create_client_session() -> ClientSession:
-    connector = TCPConnector(ssl=False) if get_proxy_url() else TCPConnector()
-    return ClientSession(timeout=TIMEOUT, connector=connector)
-
-
 @app.get("/models")
 async def list_models():
     """Proxies models request."""
     try:
         try:
-            token = await get_cached_copilot_token()
+            account = account_manager.get_next_usable_account()
+            token = await account.get_access_token()
         except ValueError as e:
             logger.error(f"Failed to get token: {str(e)}")
             raise HTTPException(503, "Service unavailable: No usable tokens available")
 
-        session = await create_client_session()
+        session = ClientSession(timeout=TIMEOUT, connector=account.get_proxy_connector()) # type: ignore
         async with session as s:
             headers = {
                 "Authorization": f"Bearer {token['token']}",
@@ -178,121 +175,204 @@ async def proxy_chat_completions(request: Request):
     except Exception as e:
         raise HTTPException(400, f"Error preprocessing request: {str(e)}")
 
-    async def stream_response():
-        max_retries = 3
-        retry_count = 0
+    # async def stream_response():
+    #     max_retries = 3
+    #     retry_count = 0
 
-        while retry_count < max_retries:
+    #     while retry_count < max_retries:
+    #         try:
+    #             try:
+    #                 account = account_manager.get_next_usable_account()
+    #                 token = await account.get_access_token() # type: ignore
+    #             except ValueError as e:
+    #                 logger.error(f"Failed to get token: {str(e)}")
+    #                 yield json.dumps(
+    #                     {"error": "No usable tokens available - service unavailable"}
+    #                 ).encode("utf-8")
+    #                 return
+
+    #             model = request_body.get("model", "")
+    #             is_streaming = request_body.get("stream", False)
+
+    #             session = ClientSession(
+    #                 timeout=TIMEOUT, connector=account.get_proxy_connector() # type: ignore
+    #             ) 
+    #             async with session as s:
+    #                 headers = {
+    #                     "Authorization": f"Bearer {token['token']}",
+    #                     "Content-Type": "application/json",
+    #                     "Accept": "text/event-stream",
+    #                     "editor-version": "vscode/1.95.3",
+    #                 }
+    #                 proxy = get_proxy_url() if RECORD_TRAFFIC else None
+    #                 async with s.post(
+    #                     CHAT_COMPLETIONS_API_ENDPOINT,
+    #                     json=request_body,
+    #                     headers=headers,
+    #                     proxy=proxy
+    #                 ) as response:
+    #                     if response.status == 429:  # Rate limit error
+    #                         error_message = await response.text()
+    #                         logger.warning(f"Rate limit hit: {error_message}")
+    #                         account.mark_rate_limited()
+    #                         retry_count += 1
+    #                         if retry_count < max_retries:
+    #                             logger.info(
+    #                                 f"Retrying request with a new token (attempt {retry_count + 1}/{max_retries})"
+    #                             )
+    #                             continue
+    #                         else:
+    #                             logger.error(
+    #                                 "All available tokens are rate limited - no more retries"
+    #                             )
+    #                             raise HTTPException(429, "All tokens are rate limited")
+    #                     elif response.status != 200:
+    #                         error_message = await response.text()
+    #                         logger.error(f"API error: {error_message}")
+    #                         if (
+    #                             "rate" in error_message.lower()
+    #                         ):  # Check for rate limit in error message
+    #                             logger.warning(
+    #                                 f"Rate limit detected in error: {error_message}"
+    #                             )
+    #                             account.mark_rate_limited()
+    #                             retry_count += 1
+    #                             if retry_count < max_retries:
+    #                                 logger.info(
+    #                                     f"Retrying request with a new token (attempt {retry_count + 1}/{max_retries})"
+    #                                 )
+    #                                 continue
+    #                         raise HTTPException(
+    #                             response.status, f"API error: {error_message}"
+    #                         )
+
+    #                     if model.startswith("o1") and is_streaming:
+    #                         # For o1 models with streaming, read entire response and convert to SSE
+    #                         data = await response.json()
+    #                         converted_data = convert_o1_response(data)
+    #                         for event in convert_to_sse_events(converted_data):
+    #                             yield event.encode("utf-8")
+    #                     else:
+    #                         # For other cases, stream chunks directly
+    #                         async for chunk in response.content.iter_chunks():
+    #                             if chunk:
+    #                                 chunk_data = chunk[0].decode("utf-8")
+    #                                 # Log chunks that contain response data
+    #                                 if (
+    #                                     "content" in chunk_data
+    #                                     and not chunk_data.startswith("data: [DONE]")
+    #                                 ):
+    #                                     try:
+    #                                         parsed = json.loads(
+    #                                             chunk_data.replace("data: ", "")
+    #                                         )
+    #                                         if (
+    #                                             "choices" in parsed
+    #                                             and parsed["choices"]
+    #                                         ):
+    #                                             content = (
+    #                                                 parsed["choices"][0]
+    #                                                 .get("delta", {})
+    #                                                 .get("content")
+    #                                             )
+    #                                             if content:
+    #                                                 logger.info(
+    #                                                     f"API Response content: {content}"
+    #                                                 )
+    #                                     except json.JSONDecodeError:
+    #                                         pass
+    #                                 yield chunk[0]
+    #             logger.info("Successfully processed chat completion request")
+    #             return  # Successfully processed request
+    #         except Exception as e:
+    #             if isinstance(e, asyncio.TimeoutError):
+    #                 logger.error("Request timed out")
+    #                 yield json.dumps(
+    #                     {"error": "Request timed out after 10 seconds"}
+    #                 ).encode("utf-8")
+    #             else:
+    #                 logger.error(f"Error in stream_response: {str(e)}")
+    #                 yield json.dumps({"error": str(e)}).encode("utf-8")
+    #             return
+    
+    max_retries = 3
+    retry_count = 0
+
+    while retry_count < max_retries:
+        try:
             try:
-                try:
-                    token = await get_cached_copilot_token()
-                except ValueError as e:
-                    logger.error(f"Failed to get token: {str(e)}")
-                    yield json.dumps(
-                        {"error": "No usable tokens available - service unavailable"}
-                    ).encode("utf-8")
-                    return
+                account = account_manager.get_next_usable_account()
+                token = await account.get_access_token() # type: ignore
+            except ValueError as e:
+                logger.error(f"Failed to get token: {str(e)}")
+                return
 
-                model = request_body.get("model", "")
-                is_streaming = request_body.get("stream", False)
+            model = request_body.get("model", "")
+            is_streaming = request_body.get("stream", False)
 
-                session = await create_client_session()
-                async with session as s:
-                    headers = {
-                        "Authorization": f"Bearer {token['token']}",
-                        "Content-Type": "application/json",
-                        "Accept": "text/event-stream",
-                        "editor-version": "vscode/1.95.3",
-                    }
-                    proxy = get_proxy_url() if RECORD_TRAFFIC else None
-                    async with s.post(
-                        CHAT_COMPLETIONS_API_ENDPOINT,
-                        json=request_body,
-                        headers=headers,
-                        proxy=proxy
-                    ) as response:
-                        if response.status == 429:  # Rate limit error
-                            error_message = await response.text()
-                            logger.warning(f"Rate limit hit: {error_message}")
-                            handle_rate_limit_response(token["token"])
+            session = ClientSession(
+                timeout=TIMEOUT, connector=account.get_proxy_connector() # type: ignore
+            ) 
+            async with session as s:
+                headers = {
+                    "Authorization": f"Bearer {token['token']}",
+                    "Content-Type": "application/json",
+                    "Accept": "text/event-stream",
+                    "editor-version": "vscode/1.95.3",
+                }
+                proxy = get_proxy_url() if RECORD_TRAFFIC else None
+                async with s.post(
+                    CHAT_COMPLETIONS_API_ENDPOINT,
+                    json=request_body,
+                    headers=headers,
+                    # proxy=proxy
+                ) as response:
+                    if response.status == 429:  # Rate limit error
+                        error_message = await response.text()
+                        logger.warning(f"Rate limit hit: {error_message}")
+                        account.mark_rate_limited()
+                        retry_count += 1
+                        if retry_count < max_retries:
+                            logger.info(
+                                f"Retrying request with a new token (attempt {retry_count + 1}/{max_retries})"
+                            )
+                            continue
+                        else:
+                            logger.error(
+                                "All available tokens are rate limited - no more retries"
+                            )
+                            raise HTTPException(429, "All tokens are rate limited")
+                    elif response.status != 200:
+                        error_message = await response.text()
+                        logger.error(f"API error: {error_message}")
+                        if (
+                            "rate" in error_message.lower()
+                        ):  # Check for rate limit in error message
+                            logger.warning(
+                                f"Rate limit detected in error: {error_message}"
+                            )
+                            account.mark_rate_limited()
                             retry_count += 1
                             if retry_count < max_retries:
                                 logger.info(
                                     f"Retrying request with a new token (attempt {retry_count + 1}/{max_retries})"
                                 )
                                 continue
-                            else:
-                                logger.error(
-                                    "All available tokens are rate limited - no more retries"
-                                )
-                                raise HTTPException(429, "All tokens are rate limited")
-                        elif response.status != 200:
-                            error_message = await response.text()
-                            logger.error(f"API error: {error_message}")
-                            if (
-                                "rate" in error_message.lower()
-                            ):  # Check for rate limit in error message
-                                logger.warning(
-                                    f"Rate limit detected in error: {error_message}"
-                                )
-                                handle_rate_limit_response(token["token"])
-                                retry_count += 1
-                                if retry_count < max_retries:
-                                    logger.info(
-                                        f"Retrying request with a new token (attempt {retry_count + 1}/{max_retries})"
-                                    )
-                                    continue
-                            raise HTTPException(
-                                response.status, f"API error: {error_message}"
-                            )
+                        raise HTTPException(
+                            response.status, f"API error: {error_message}"
+                        )
+                    
+                    respText = await response.json()
+                    logger.info(f"API Response: {respText}")
+                    return respText
+        except Exception as e:
+            if isinstance(e, asyncio.TimeoutError):
+                logger.error("Request timed out")
+            else:
+                logger.error(f"Error in stream_response: {str(traceback.format_exc())}")
+            return
 
-                        if model.startswith("o1") and is_streaming:
-                            # For o1 models with streaming, read entire response and convert to SSE
-                            data = await response.json()
-                            converted_data = convert_o1_response(data)
-                            for event in convert_to_sse_events(converted_data):
-                                yield event.encode("utf-8")
-                        else:
-                            # For other cases, stream chunks directly
-                            async for chunk in response.content.iter_chunks():
-                                if chunk:
-                                    chunk_data = chunk[0].decode("utf-8")
-                                    # Log chunks that contain response data
-                                    if (
-                                        "content" in chunk_data
-                                        and not chunk_data.startswith("data: [DONE]")
-                                    ):
-                                        try:
-                                            parsed = json.loads(
-                                                chunk_data.replace("data: ", "")
-                                            )
-                                            if (
-                                                "choices" in parsed
-                                                and parsed["choices"]
-                                            ):
-                                                content = (
-                                                    parsed["choices"][0]
-                                                    .get("delta", {})
-                                                    .get("content")
-                                                )
-                                                if content:
-                                                    logger.info(
-                                                        f"API Response content: {content}"
-                                                    )
-                                        except json.JSONDecodeError:
-                                            pass
-                                    yield chunk[0]
-                logger.info("Successfully processed chat completion request")
-                return  # Successfully processed request
-            except Exception as e:
-                if isinstance(e, asyncio.TimeoutError):
-                    logger.error("Request timed out")
-                    yield json.dumps(
-                        {"error": "Request timed out after 10 seconds"}
-                    ).encode("utf-8")
-                else:
-                    logger.error(f"Error in stream_response: {str(e)}")
-                    yield json.dumps({"error": str(e)}).encode("utf-8")
-                return
 
-    return StreamingResponse(stream_response(), media_type="text/event-stream")
+    # return StreamingResponse(stream_response(), media_type="text/event-stream")
+    # return stream_response()
+

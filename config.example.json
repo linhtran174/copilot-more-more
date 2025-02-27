@@ -1,19 +1,23 @@
 {
-  "refresh_tokens": [
+  "accounts": [
     {
-      "token": "gho_xxxxxxxxxxxxxxxxxxxxxxx"
+      "id": "nhan4456020059",
+      "password": "bachkhoi",
+      "token": "gho_R7b2FiGHGHT6o2jMamX9jPxbwJI2cAhiO",
+      "proxy": {
+        "host": "",
+        "port": 39165,
+        "username": "VN731058",
+        "password": "bXaV5v6I"
+      }
     },
     {
-      "token": "gho_yyyyyyyyyyyyyyyyyyyyyyy",
-      "proxy": {
-        "type": "socks5",
-        "host": "proxy.example.com",
-        "port": 1080,
-        "username": "proxy_user",
-        "password": "proxy_pass"
-      }
+      "id": "copilot.github.gdd8@gmail.com",
+      "password": "J/2794sdsd",
+      "token": "gho_zb9t8mm6qZY0NtXJQF6k4K3sdsdsd3ltQHi"
     }
   ],
+  "token_refresh_interval": 1000,
   "request_timeout": 100,
   "record_traffic": true
 }

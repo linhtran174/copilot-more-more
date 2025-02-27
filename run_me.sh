@@ -22,30 +22,17 @@ check_poetry() {
 # Print API information
 print_api_info() {
     echo "=====================================
-API Information
-=====================================
-Provider: GitHub Copilot
-API URL: https://api.individual.githubcopilot.com
-Base Endpoints:
-  - Chat Completions: /chat/completions
-  - Models: /models
-Default Port: 15432
-
-Available Models:
+Popular Models:
   - gpt-4o
   - claude-3.5-sonnet
+  - claude-3.7-sonnet
   - o1
   - o1-mini
 
-Authentication:
-  - Bearer token required (automatically managed)
-  - Multiple tokens supported with round-robin rotation
-  - Automatic rate limit handling
-
 Usage:
-  1. Set REFRESH_TOKEN in .env file
-  2. Server runs on http://localhost:15432
-  3. Use standard OpenAI API format for requests
+  1. Check config.json
+  2. Chat completion API: http://localhost:15432/chat/completions
+  3. Model API: http://localhost:15432/models
 =====================================
 "
 }

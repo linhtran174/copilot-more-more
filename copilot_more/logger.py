@@ -7,7 +7,7 @@ log_dir = Path('logs')
 log_dir.mkdir(exist_ok=True)
 
 # Configure logging
-log_format = '%(asctime)s - %(levelname)s - %(message).200s'
+log_format = '%(asctime)s - %(levelname)s - %(message)s'
 formatter = logging.Formatter(log_format)
 
 # File handler
