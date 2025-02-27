@@ -22,20 +22,17 @@ check_poetry() {
 # Print API information
 print_api_info() {
     echo "=====================================
-API Information
-=====================================
-Provider: GitHub Copilot
-API URL: https://api.individual.githubcopilot.com
-Base Endpoints:
-  - Chat Completions: /chat/completions
-  - Models: /models
-Default Port: 15432
-
-Available Models:
+Popular Models:
   - gpt-4o
   - claude-3.5-sonnet
+  - claude-3.7-sonnet
   - o1
   - o1-mini
+
+Usage:
+  1. Check config.json
+  2. Chat completion API: http://localhost:15432/chat/completions
+  3. Model API: http://localhost:15432/models
 =====================================
 "
 }
