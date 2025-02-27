@@ -33,6 +33,7 @@ class AccountInfo:
         self.username = username
         self.refresh_token = refresh_token
         self.rate_limited_until = 0
+        self._bad_credentials = False
         self.access_token: Optional[AccessToken] = None
         self.proxy_config = proxy_config
         self.last_used = 0
@@ -74,7 +75,7 @@ class AccountInfo:
         """Check if the account has a valid, non-rate-limited access token."""
         if not self.access_token:
             return True  # No token yet, so can be used to get one
-        return not self.is_rate_limited()
+        return not self.is_rate_limited() and not self._bad_credentials
 
     def mark_rate_limited(self, duration: int = 60):
         self.rate_limited_until = time.time() + duration
@@ -86,12 +87,16 @@ class AccountInfo:
             return False
         return time.time() < self.rate_limited_until
         
-    async def get_access_token(self) -> Optional[str]:
+    async def get_access_token(self) -> Dict[str, str]:
         """Get the current access token if available."""
         if self.access_token and self.access_token.is_valid():
-            return self.access_token.token
+            return {"token": self.access_token.token}
         logger.info(f"Getting fresh token for account {self.username}")
-        new_token = await self.refresh_access_token()
+        try: 
+            new_token = await self.refresh_access_token()
+        except Exception as e:
+            return None
+        
         # logger.info(f"Token details:\n{json.dumps(new_token, indent=2)}")
         self.update_access_token(new_token["token"], new_token["expires_at"])
         return new_token
@@ -124,11 +129,15 @@ class AccountInfo:
                         f"Token refreshed successfully, expires at {token_data.get('expires_at')}"
                     )
                     return token_data
+                #If response text contains Bad crednetials then set bad credentials to True
+                elif response.status == 401 or (await response.text()).find("Bad credentials") != -1:
+                    self._bad_credentials = True
+                
                 error_msg = (
                     f"Failed to refresh token for account {self.username}: {response.status} {await response.text()}"
                 )
-                logger.error(error_msg)
-                raise ValueError(error_msg)
+                self._bad_credentials = True
+                raise Exception(error_msg)
         
     def get_proxy_connector(self) -> ProxyConnector:
         return self._proxy_connector

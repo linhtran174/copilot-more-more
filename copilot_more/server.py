@@ -123,12 +123,22 @@ async def list_models():
     try:
         try:
             account = account_manager.get_next_usable_account()
+            if not account:
+                raise ValueError("No usable account available")
+
             token = await account.get_access_token()
+            if not token:
+                raise ValueError("Failed to get access token")
+
         except ValueError as e:
             logger.error(f"Failed to get token: {str(e)}")
             raise HTTPException(503, "Service unavailable: No usable tokens available")
 
-        session = ClientSession(timeout=TIMEOUT, connector=account.get_proxy_connector()) # type: ignore
+        connector = account.get_proxy_connector()
+        if not connector:
+            raise HTTPException(500, "Failed to get proxy connector")
+
+        session = ClientSession(timeout=TIMEOUT, connector=connector)
         async with session as s:
             headers = {
                 "Authorization": f"Bearer {token['token']}",
@@ -302,17 +312,25 @@ async def proxy_chat_completions(request: Request):
         try:
             try:
                 account = account_manager.get_next_usable_account()
-                token = await account.get_access_token() # type: ignore
+                if not account:
+                    raise ValueError("No usable account available")
+                
+                token = await account.get_access_token()
+                if not token:
+                    continue
+
             except ValueError as e:
                 logger.error(f"Failed to get token: {str(e)}")
-                return
+                raise HTTPException(503, "Service unavailable: No usable tokens available")
 
             model = request_body.get("model", "")
             is_streaming = request_body.get("stream", False)
 
-            session = ClientSession(
-                timeout=TIMEOUT, connector=account.get_proxy_connector() # type: ignore
-            ) 
+            connector = account.get_proxy_connector()
+            if not connector:
+                raise HTTPException(500, "Failed to get proxy connector")
+
+            session = ClientSession(timeout=TIMEOUT, connector=connector)
             async with session as s:
                 headers = {
                     "Authorization": f"Bearer {token['token']}",
