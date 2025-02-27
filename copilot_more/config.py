@@ -17,13 +17,14 @@ class ProxyConfig:
 class AccountConfig:
     """Configuration for a GitHub Copilot account."""
     refresh_token: str
+    username: str
     proxy: Optional[ProxyConfig] = None
 
 class Config:
     """Main configuration class."""
     def __init__(self, config_file: str = "config.json"):
         self.config_file = config_file
-        self.refresh_tokens: List[AccountConfig] = []
+        self.accounts: List[AccountConfig] = []
         self.request_timeout: int = 60  # default timeout
         self.record_traffic: bool = False  # default record traffic setting
         self._load_config()
@@ -39,8 +40,8 @@ class Config:
                 config_data = json.load(f)
 
             # Load accounts configuration
-            accounts_data = config_data.get('refresh_tokens', [])
-            self.refresh_tokens = []
+            accounts_data = config_data.get('accounts', [])
+            self.accounts = []
             for account_data in accounts_data:
                 proxy_config = None
                 if "proxy" in account_data:
@@ -51,9 +52,10 @@ class Config:
                         username=proxy.get("username"),
                         password=proxy.get("password")
                     )
-                self.refresh_tokens.append(
+                self.accounts.append(
                     AccountConfig(
                         refresh_token=account_data["token"],
+                        username=account_data["id"],
                         proxy=proxy_config
                     )
                 )
@@ -62,7 +64,7 @@ class Config:
             self.request_timeout = config_data.get('request_timeout', 60)
             self.record_traffic = config_data.get('record_traffic', False)
 
-            logger.info(f"Successfully loaded configuration with {len(self.refresh_tokens)} accounts")
+            logger.info(f"Successfully loaded configuration with {len(self.accounts)} accounts")
 
         except Exception as e:
             logger.error(f"Error loading config: {e}")
@@ -72,6 +74,6 @@ class Config:
 config = Config()
 
 # Export commonly used values
-account_configs = config.refresh_tokens
+account_configs = config.accounts
 request_timeout = config.request_timeout
 record_traffic = config.record_traffic

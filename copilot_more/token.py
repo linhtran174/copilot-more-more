@@ -38,7 +38,7 @@ async def refresh_token_for_account(account) -> Dict:
                 )
                 return token_data
             error_msg = (
-                f"Failed to refresh token: {response.status} {await response.text()}"
+                f"Failed to refresh token for account {account.username}: {response.status} {await response.text()}"
             )
             logger.error(error_msg)
             raise ValueError(error_msg)
@@ -55,8 +55,9 @@ async def get_cached_copilot_token() -> Dict:
             "expires_at": account.access_token.expires_at,
         }
 
-    logger.info("Getting fresh token for account...")
+    logger.info(f"Getting fresh token for account {account.username}")
     new_token = await refresh_token_for_account(account)
+    logger.info(f"Token details:\n{json.dumps(new_token, indent=2)}")
     account.update_access_token(new_token["token"], new_token["expires_at"])
     return new_token
 

@@ -20,7 +20,7 @@ class AccessToken:
 
     def is_valid(self) -> bool:
         """Check if token is not expired (with 5 minute buffer)."""
-        return self.expires_at > time.time() + 300
+        return self.expires_at > time.time() + 60
 
     def is_rate_limited(self) -> bool:
         """Check if token is currently rate limited."""
@@ -34,7 +34,8 @@ class AccessToken:
 class AccountInfo:
     """Manages a GitHub Copilot account's refresh and access tokens."""
 
-    def __init__(self, refresh_token: str, proxy_config: Optional[ProxyConfig] = None):
+    def __init__(self, refresh_token: str, username: str, proxy_config: Optional[ProxyConfig] = None):
+        self.username = username
         self.refresh_token = refresh_token
         self.access_token: Optional[AccessToken] = None
         self.proxy_config = proxy_config
@@ -59,9 +60,9 @@ class AccountInfo:
             "https": proxy_url
         }
 
-    def update_access_token(self, token: str, expires_at: int):
+    def update_refresh_token(self, token: str, expires_at: int):
         """Update the account's access token."""
-        self.access_token = AccessToken(token, expires_at)
+        self.refresh_token = AccessToken(token, expires_at)
         logger.info(f"Updated access token for account, expires at {expires_at}")
 
     def is_usable(self) -> bool:
@@ -85,12 +86,12 @@ class AccountManager:
         self.current_index = 0
         self.lock = threading.Lock()
 
-    def add_account(self, refresh_token: str, proxy_config: Optional[ProxyConfig] = None):
+    def add_account(self, refresh_token: str, username: str, proxy_config: Optional[ProxyConfig] = None):
         """Add a new account using its refresh token and optional proxy configuration."""
         with self.lock:
             # Check if account already exists
             if not any(acc.refresh_token == refresh_token for acc in self.accounts):
-                self.accounts.append(AccountInfo(refresh_token, proxy_config))
+                self.accounts.append(AccountInfo(refresh_token, username, proxy_config))
                 logger.info("Added new account to manager")
 
     def get_next_usable_account(self) -> Optional[AccountInfo]:
@@ -139,7 +140,7 @@ if not account_configs:
     logger.error("No account configurations available - accounts cannot be initialized")
 else:
     for config in account_configs:
-        account_manager.add_account(config.refresh_token, config.proxy)
+        account_manager.add_account(config.refresh_token, config.username, config.proxy)
     logger.info(f"Successfully initialized {len(account_manager.accounts)} accounts")
 
 if not account_manager.accounts:
