@@ -15,11 +15,10 @@ from copilot_more.config import account_configs, ProxyConfig
 @dataclass
 class AccessToken:
     """Represents a GitHub Copilot access token."""
-
     token: str
     expires_at: int
     rate_limited_until: int = 0
-    last_used: float = 0
+    last_used: int = 0
 
     def is_valid(self) -> bool:
         """Check if token is not expired (with 5 minute buffer)."""
@@ -37,39 +36,11 @@ class AccountInfo:
         self.access_token: Optional[AccessToken] = None
         self.proxy_config = proxy_config
         self.last_used = 0
-        if self.proxy_config:
-            if self.proxy_config.username and self.proxy_config.password:
-                self._proxy_connector = ProxyConnector.from_url(
-                    f'socks5://{self.proxy_config.username}:{self.proxy_config.password}@{self.proxy_config.host}:{self.proxy_config.port}'
-                )
-            else:
-                self._proxy_connector = ProxyConnector.from_url(
-                    f'socks5://{self.proxy_config.host}:{self.proxy_config.port}'
-                )
-        
-    @property
-    def proxies(self) -> Optional[Dict[str, str]]:
-        """Get the proxy configuration in the format required by requests library."""
-        if not self.proxy_config:
-            return None
-            
-        auth = ""
-        if self.proxy_config.username:
-            auth = f"{quote(self.proxy_config.username)}"
-            if self.proxy_config.password:
-                auth += f":{quote(self.proxy_config.password)}"
-            auth += "@"
-            
-        proxy_url = f"socks5://{auth}{self.proxy_config.host}:{self.proxy_config.port}"
-        return {
-            "http": proxy_url,
-            "https": proxy_url
-        }
 
     def update_access_token(self, token: str, expires_at: int):
         """Update the account's access token."""
         self.access_token = AccessToken(token, expires_at)
-        logger.info(f"Updated access token for account, expires at {expires_at}")
+        logger.info(f"Updated access token for account {self.username}, expires at {expires_at}")
 
     def is_usable(self) -> bool:
         """Check if the account has a valid, non-rate-limited access token."""
@@ -79,7 +50,7 @@ class AccountInfo:
 
     def mark_rate_limited(self, duration: int = 60):
         self.rate_limited_until = time.time() + duration
-        logger.warning(f"Account marked as rate limited for {duration} seconds")
+        logger.warning(f"Account {self.username} marked as rate limited for {duration} seconds")
 
     def is_rate_limited(self) -> bool:
         """Check if token is currently rate limited."""
@@ -87,60 +58,80 @@ class AccountInfo:
             return False
         return time.time() < self.rate_limited_until
         
-    async def get_access_token(self) -> Dict[str, str]:
+    async def get_access_token(self) -> Optional[Dict[str, str]]:
         """Get the current access token if available."""
         if self.access_token and self.access_token.is_valid():
             return {"token": self.access_token.token}
         logger.info(f"Getting fresh token for account {self.username}")
         try: 
             new_token = await self.refresh_access_token()
+            self.update_access_token(new_token["token"], new_token["expires_at"])
+            return new_token
         except Exception as e:
+            logger.error(f"Failed to get access token for {self.username}: {str(e)}")
             return None
-        
-        # logger.info(f"Token details:\n{json.dumps(new_token, indent=2)}")
-        self.update_access_token(new_token["token"], new_token["expires_at"])
-        return new_token
     
     async def refresh_access_token(self) -> Dict:
         """Refresh the account's access token."""
-        logger.info("Attempting to refresh token for account")
+        logger.info(f"Attempting to refresh token for account {self.username}")
         connector = None
+        session = None
+        try:
+            if self.proxy_config:
+                if self.proxy_config.username and self.proxy_config.password:
+                    connector = ProxyConnector.from_url(
+                        f'socks5://{self.proxy_config.username}:{self.proxy_config.password}@{self.proxy_config.host}:{self.proxy_config.port}'
+                    )
+                else:
+                    connector = ProxyConnector.from_url(
+                        f'socks5://{self.proxy_config.host}:{self.proxy_config.port}'
+                    )
+
+            session = ClientSession(connector=connector)
+            logger.debug("Created session for token refresh")
+            
+            async with session:
+                async with session.get(
+                    url="https://api.github.com/copilot_internal/v2/token",
+                    headers={
+                        "Authorization": f"token {self.refresh_token}",
+                        "editor-version": "vscode/1.95.3",
+                    },
+                ) as response:
+                    response_text = await response.text()
+                    if response.status == 200:
+                        token_data = await response.json()
+                        logger.info(
+                            f"Token refreshed successfully for {self.username}, expires at {token_data.get('expires_at')}"
+                        )
+                        return token_data
+
+                    if response.status == 401 or "Bad credentials" in response_text:
+                        self._bad_credentials = True
+                        error_msg = f"Bad credentials for account {self.username}"
+                    else:
+                        error_msg = f"Failed to refresh token for account {self.username}: Status {response.status} - {response_text}"
+                    self._bad_credentials = True
+                    raise Exception(error_msg)
+        except Exception as e:
+            logger.error(f"Error during token refresh for {self.username}: {str(e)}")
+            raise
+        finally:
+            if session and not session.closed:
+                await session.close()
+                logger.debug("Closed session after token refresh")
+        
+    def get_proxy_connector(self) -> Optional[ProxyConnector]:
         if self.proxy_config:
             if self.proxy_config.username and self.proxy_config.password:
-                connector = ProxyConnector.from_url(
+                self._proxy_connector = ProxyConnector.from_url(
                     f'socks5://{self.proxy_config.username}:{self.proxy_config.password}@{self.proxy_config.host}:{self.proxy_config.port}'
                 )
             else:
-                connector = ProxyConnector.from_url(
+                self._proxy_connector = ProxyConnector.from_url(
                     f'socks5://{self.proxy_config.host}:{self.proxy_config.port}'
                 )
-
-        async with ClientSession(connector=connector) as session:
-            async with session.get(
-                url="https://api.github.com/copilot_internal/v2/token",
-                headers={
-                    "Authorization": f"token {self.refresh_token}",
-                    "editor-version": "vscode/1.95.3",
-                },
-            ) as response:
-                if response.status == 200:
-                    token_data = await response.json()
-                    logger.info(
-                        f"Token refreshed successfully, expires at {token_data.get('expires_at')}"
-                    )
-                    return token_data
-                #If response text contains Bad crednetials then set bad credentials to True
-                elif response.status == 401 or (await response.text()).find("Bad credentials") != -1:
-                    self._bad_credentials = True
-                
-                error_msg = (
-                    f"Failed to refresh token for account {self.username}: {response.status} {await response.text()}"
-                )
-                self._bad_credentials = True
-                raise Exception(error_msg)
-        
-    def get_proxy_connector(self) -> ProxyConnector:
-        return self._proxy_connector
+        return None
          
 class AccountManager:
     """Manages multiple GitHub Copilot accounts and their tokens."""
@@ -156,7 +147,7 @@ class AccountManager:
             # Check if account already exists
             if not any(acc.refresh_token == refresh_token for acc in self.accounts):
                 self.accounts.append(AccountInfo(refresh_token, username, proxy_config))
-                logger.info("Added new account to manager")
+                logger.info(f"Added new account {username} to manager")
 
     def get_next_usable_account(self) -> Optional[AccountInfo]:
         """Get the next account that can be used, in round-robin fashion."""
@@ -169,7 +160,7 @@ class AccountManager:
                 current_account = self.accounts[self.current_index]
 
                 if current_account.is_usable():
-                    current_account.last_used = time.time()
+                    current_account.last_used = int(time.time())
                     # Only increment index after finding a usable account
                     self.current_index = (self.current_index + 1) % len(self.accounts)
                     return current_account
@@ -193,7 +184,7 @@ class AccountManager:
         account = self.get_account_by_token(access_token)
         if account:
             account.mark_rate_limited()
-            logger.warning(f"Account marked as rate limited due to 429 response")
+            logger.warning(f"Account {account.username} marked as rate limited due to 429 response")
 
 
 # Global account manager instance
