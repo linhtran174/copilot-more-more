@@ -5,7 +5,7 @@ import traceback
 from aiohttp import ClientSession, ClientTimeout, TCPConnector
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, JSONResponse
 
 from copilot_more.account_manager import account_manager
 from copilot_more.logger import logger
@@ -71,7 +71,7 @@ def preprocess_request_body(request_body: dict) -> dict:
     max_tokens = request_body.get("max_tokens", MAX_TOKENS)
     return {**request_body, "messages": processed_messages, "max_tokens": max_tokens}
 
-async def make_request(account, request_body):
+async def make_request(account, request_body, endpoint=CHAT_COMPLETIONS_API_ENDPOINT, accept_header="text/event-stream"):
     """Make a single request with proper session handling."""
     logger.info("Fetching access token")
     token = await account.get_access_token()
@@ -81,7 +81,7 @@ async def make_request(account, request_body):
     headers = {
         "Authorization": f"Bearer {token['token']}",
         "Content-Type": "application/json",
-        "Accept": "text/event-stream",
+        "Accept": accept_header,
         "editor-version": "vscode/1.95.3",
     }
     proxy = get_proxy_url() if RECORD_TRAFFIC else None
@@ -92,13 +92,13 @@ async def make_request(account, request_body):
         timeout=TIMEOUT,
         connector=connector if connector else None
     ) as session:
-        logger.info("Making API request")
+        logger.info(f"Making API request to {endpoint}")
         if(session.closed):
             logger.error("Session is closed")
             return None
-        async with session.post(    
-            CHAT_COMPLETIONS_API_ENDPOINT,
-            json=request_body,
+        async with session.post(
+            endpoint,
+            json=request_body if request_body else {},
             headers=headers,
             proxy=proxy
         ) as response:
@@ -146,6 +146,102 @@ async def make_request(account, request_body):
 #             continue
         
     
+@app.get("/models")
+async def list_models():
+    """Proxies models request to GitHub Copilot API."""
+    logger.info("Received models request")
+    
+    try:
+        max_retries = 3
+        retry_count = 0
+        last_error = None
+        
+        while retry_count < max_retries:
+            try:
+                # Get an available account
+                account = account_manager.get_next_usable_account()
+                if not account:
+                    raise ValueError("No usable account available")
+                
+                # Get the token for this account
+                token = await account.get_access_token()
+                if not token:
+                    raise ValueError("Failed to get access token")
+                
+                logger.info(f"Using account {account.username} for models request")
+                
+                # Set up headers
+                headers = {
+                    "Authorization": f"Bearer {token['token']}",
+                    "Content-Type": "application/json",
+                    "Accept": "application/json",
+                    "editor-version": "vscode/1.95.3",
+                }
+                
+                # Get proxy URL if needed
+                proxy = get_proxy_url() if RECORD_TRAFFIC else None
+                connector = account.get_proxy_connector()
+                
+                # Create session and make request
+                async with ClientSession(
+                    timeout=TIMEOUT,
+                    connector=connector if connector else None
+                ) as session:
+                    logger.info(f"Making GET request to {MODELS_API_ENDPOINT}")
+                    
+                    if session.closed:
+                        logger.error("Session is closed")
+                        retry_count += 1
+                        continue
+                        
+                    async with session.get(
+                        MODELS_API_ENDPOINT,
+                        headers=headers,
+                        proxy=proxy
+                    ) as response:
+                        if response.status == 429:
+                            error_message = await response.text()
+                            logger.warning(f"Rate limit hit: {error_message}")
+                            account.mark_rate_limited()
+                            retry_count += 1
+                            continue
+                        elif response.status != 200:
+                            error_message = await response.text()
+                            logger.error(f"Models API error: {error_message}")
+                            if "rate" in error_message.lower():
+                                logger.warning(f"Rate limit detected in error: {error_message}")
+                                account.mark_rate_limited()
+                                retry_count += 1
+                                continue
+                            raise HTTPException(response.status, f"Models API error: {error_message}")
+                        
+                        response_data = await response.json()
+                        logger.info(f"Successfully fetched models using account {account.username}")
+                        return response_data
+                        
+            except ValueError as e:
+                logger.error(str(e))
+                raise HTTPException(503, str(e))
+            except HTTPException:
+                raise
+            except Exception as e:
+                logger.error(f"Error fetching models: {str(traceback.format_exc())}")
+                last_error = e
+                retry_count += 1
+        
+        # If we get here, all retries failed
+        if last_error:
+            raise HTTPException(500, f"Error after {max_retries} retries: {str(last_error)}")
+        else:
+            raise HTTPException(429, "All retries exhausted due to rate limits")
+            
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Unexpected error in models endpoint: {str(e)}")
+        raise HTTPException(500, f"Error fetching models: {str(e)}")
+
+
 @app.post("/chat/completions")
 async def proxy_chat_completions(request: Request):
     """Proxies chat completion requests."""
@@ -196,7 +292,8 @@ async def proxy_chat_completions(request: Request):
             last_error = e
             retry_count += 1
 
-    return result
+    if result is not None:
+        return result
 
     if last_error:
         raise HTTPException(500, f"Error after {max_retries} retries: {str(last_error)}")
