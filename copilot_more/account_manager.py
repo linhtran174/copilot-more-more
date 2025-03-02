@@ -163,6 +163,7 @@ class AccountManager:
                     current_account.last_used = int(time.time())
                     # Only increment index after finding a usable account
                     self.current_index = (self.current_index + 1) % len(self.accounts)
+                    logger.info(f"Account {current_account.username} is being used")
                     return current_account
 
                 # Move to next account
