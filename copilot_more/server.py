@@ -71,7 +71,7 @@ def preprocess_request_body(request_body: dict) -> dict:
     max_tokens = request_body.get("max_tokens", MAX_TOKENS)
     return {**request_body, "messages": processed_messages, "max_tokens": max_tokens}
 
-async def make_request(account, request_body, endpoint=CHAT_COMPLETIONS_API_ENDPOINT, accept_header="text/event-stream"):
+async def make_request(account, request_body, endpoint=CHAT_COMPLETIONS_API_ENDPOINT, accept_header="text/event-stream", stream=False):
     """Make a single request with proper session handling."""
     logger.info("Fetching access token")
     token = await account.get_access_token()
@@ -96,6 +96,7 @@ async def make_request(account, request_body, endpoint=CHAT_COMPLETIONS_API_ENDP
         if(session.closed):
             logger.error("Session is closed")
             return None
+        
         async with session.post(
             endpoint,
             json=request_body if request_body else {},
@@ -106,6 +107,23 @@ async def make_request(account, request_body, endpoint=CHAT_COMPLETIONS_API_ENDP
                 error_message = await response.text()
                 logger.warning(f"Rate limit hit: {error_message}")
                 account.mark_rate_limited()
+                
+                # For streaming requests, create an SSE-compliant error message
+                if stream:
+                    async def error_stream():
+                        try:
+                            error_data = json.dumps({
+                                "error": {
+                                    "message": f"Rate limit exceeded. Please try again later.",
+                                    "type": "rate_limit_error",
+                                    "code": 429
+                                }
+                            })
+                            yield f"data: {error_data}\n\ndata: [DONE]\n\n".encode("utf-8")
+                        except Exception as e:
+                            logger.error(f"Error generating rate limit error stream: {str(e)}")
+                            yield b"data: [DONE]\n\n"
+                    return error_stream()
                 return None
             elif response.status != 200:
                 error_message = await response.text()
@@ -113,12 +131,102 @@ async def make_request(account, request_body, endpoint=CHAT_COMPLETIONS_API_ENDP
                 if "rate" in error_message.lower():
                     logger.warning(f"Rate limit detected in error: {error_message}")
                     account.mark_rate_limited()
+                    
+                    # For streaming requests, create an SSE-compliant error message
+                    if stream:
+                        async def error_stream():
+                            try:
+                                error_data = json.dumps({
+                                    "error": {
+                                        "message": f"Rate limit detected in error response.",
+                                        "type": "rate_limit_error",
+                                        "code": response.status
+                                    }
+                                })
+                                yield f"data: {error_data}\n\ndata: [DONE]\n\n".encode("utf-8")
+                            except Exception as e:
+                                logger.error(f"Error generating rate limit error stream: {str(e)}")
+                                yield b"data: [DONE]\n\n"
+                        return error_stream()
                     return None
+                
+                # For streaming requests, create an SSE-compliant error message
+                if stream:
+                    async def error_stream():
+                        try:
+                            error_data = json.dumps({
+                                "error": {
+                                    "message": f"API error: {error_message}",
+                                    "type": "api_error",
+                                    "code": response.status
+                                }
+                            })
+                            yield f"data: {error_data}\n\ndata: [DONE]\n\n".encode("utf-8")
+                        except Exception as e:
+                            logger.error(f"Error generating API error stream: {str(e)}")
+                            yield b"data: [DONE]\n\n"
+                    return error_stream()
                 raise HTTPException(response.status, f"API error: {error_message}")
-            
-            resp_text = await response.json()
-            logger.info("Successfully completed request")
-            return resp_text
+                
+            if stream:
+                # Return a streaming generator that preserves SSE format
+                logger.info("Creating streaming response generator")
+                async def response_generator():
+                    """
+                    Generate streaming response with robust error handling.
+                    This generator safely reads the response and handles connection issues.
+                    """
+                    from aiohttp.client_exceptions import ClientConnectionError, ClientPayloadError
+                    
+                    # Track if we've already sent the completion message
+                    completion_sent = False
+                    
+                    try:
+                        # Attempt to get the response content with multiple strategies
+                        try:
+                            # First try to read the entire content at once
+                            content = await response.read()
+                            if content:
+                                # Yield the entire content at once to avoid connection issues
+                                yield content
+                                logger.debug(f"Streamed complete response ({len(content)} bytes)")
+                                
+                                # Check if the response already includes a completion message
+                                completion_sent = content.endswith(b"data: [DONE]\n\n")
+                        except (ClientConnectionError, ClientPayloadError) as conn_err:
+                            # Connection was closed - log but don't fail the entire request
+                            logger.warning(f"Connection issue while reading response: {conn_err}")
+                            # We'll send our own completion message below
+                            
+                        # Ensure we always send a proper SSE completion message if needed
+                        if not completion_sent:
+                            logger.debug("Sending completion message as it wasn't in the response")
+                            yield b"data: [DONE]\n\n"
+                            
+                    except Exception as e:
+                        # Handle any other errors during streaming
+                        logger.error(f"Error during streaming: {str(e)}")
+                        if not completion_sent:
+                            # Send an error message in SSE format if we haven't already sent completion
+                            try:
+                                error_data = json.dumps({
+                                    "error": {
+                                        "message": f"Stream error: {str(e)}",
+                                        "type": "stream_error"
+                                    }
+                                })
+                                yield f"data: {error_data}\n\ndata: [DONE]\n\n".encode("utf-8")
+                            except:
+                                # Last resort - just send completion message
+                                yield b"data: [DONE]\n\n"
+                
+                logger.info("Streaming response ready")
+                return response_generator()
+            else:
+                # Return the full response as JSON
+                resp_text = await response.json()
+                logger.info("Successfully completed request")
+                return resp_text
 
 # @app.post("/chat/completions")
 # async def proxy_chat_completions_test(request: Request):
@@ -255,6 +363,9 @@ async def proxy_chat_completions(request: Request):
         ]
     # logger.info(f"Received request: {json.dumps(log_request, indent=2)}")
     
+    # Check if this is a streaming request
+    stream_mode = request_body.get("stream", False)
+    logger.info(f"Request stream mode: {stream_mode}")
 
     try:
         request_body = preprocess_request_body(request_body)
@@ -267,16 +378,37 @@ async def proxy_chat_completions(request: Request):
     retry_count = 0
     last_error = None
 
-    result = None
     while retry_count < max_retries:
         try:
             account = account_manager.get_next_usable_account()
             if not account:
                 raise ValueError("No usable account available")
 
-            result = await make_request(account, request_body)
+            # Make the request with stream parameter
+            result = await make_request(account, request_body, stream=stream_mode)
             if result is not None:
-                break;
+                if stream_mode:
+                    # Return a streaming response
+                    logger.info("Returning streaming response")
+                    response = StreamingResponse(
+                        result,
+                        media_type="text/event-stream",
+                        # Add status code explicitly to ensure consistent behavior
+                        status_code=200
+                    )
+                    # Add necessary headers for SSE
+                    response.headers["Cache-Control"] = "no-cache"
+                    response.headers["Connection"] = "keep-alive"
+                    response.headers["X-Accel-Buffering"] = "no"  # Disable buffering for Nginx
+                    # Add CORS headers specifically for streaming
+                    response.headers["Access-Control-Allow-Origin"] = "*"
+                    response.headers["Access-Control-Expose-Headers"] = "*"
+                    logger.debug("Configured streaming response with SSE headers")
+                    return response
+                else:
+                    # Return the JSON response
+                    logger.info("Returning JSON response")
+                    return result
 
             # If we get here, it means we hit a rate limit
             retry_count += 1
@@ -291,9 +423,6 @@ async def proxy_chat_completions(request: Request):
             logger.error(f"Error in request: {str(traceback.format_exc())}")
             last_error = e
             retry_count += 1
-
-    if result is not None:
-        return result
 
     if last_error:
         raise HTTPException(500, f"Error after {max_retries} retries: {str(last_error)}")
