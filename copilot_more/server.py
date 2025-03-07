@@ -82,7 +82,9 @@ async def make_request(account, request_body, endpoint=CHAT_COMPLETIONS_API_ENDP
         "Authorization": f"Bearer {token['token']}",
         "Content-Type": "application/json",
         "Accept": accept_header,
-        "editor-version": "vscode/1.95.3",
+        "editor-version": "Neovim/0.6.1",
+        "editor-plugin-version": "copilot.vim/1.16.0",
+        "user-agent": "GithubCopilot/1.155.0",
     }
     proxy = get_proxy_url() if RECORD_TRAFFIC else None
     connector = account.get_proxy_connector()
