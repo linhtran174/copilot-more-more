@@ -64,7 +64,7 @@ if [ -n "$proxy_host" ] && [ -n "$proxy_port" ] && [ "$proxy_host" != "null" ] &
         proxy_auth="$proxy_username:$proxy_password@"
     fi
     
-    proxy_url="http://$proxy_auth$proxy_host:$proxy_port"
+    proxy_url="socks5://$proxy_auth$proxy_host:$proxy_port"
     proxy_cmd="-x $proxy_url"
 else
     echo "No valid proxy configuration found for this account."
