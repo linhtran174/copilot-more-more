@@ -1,6 +1,6 @@
 import json
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import List, Optional, Dict
 
 from copilot_more.logger import logger
@@ -14,11 +14,24 @@ class ProxyConfig:
     password: Optional[str] = None
 
 @dataclass
+class RateLimitWindow:
+    """Configuration for a rate limit window."""
+    duration: int  # Duration in seconds
+    max_requests: int  # Maximum number of requests allowed in this window
+
+DEFAULT_RATE_LIMIT_WINDOWS = [
+    RateLimitWindow(duration=10, max_requests=2),   # 10 sec window
+    RateLimitWindow(duration=60, max_requests=10),  # 1 min window
+    RateLimitWindow(duration=3600, max_requests=40) # 1 hour window
+]
+
+@dataclass
 class AccountConfig:
     """Configuration for a GitHub Copilot account."""
     refresh_token: str
     username: str
     proxy: Optional[ProxyConfig] = None
+    rate_limit_windows: List[RateLimitWindow] = field(default_factory=lambda: DEFAULT_RATE_LIMIT_WINDOWS.copy())
 
 class Config:
     """Main configuration class."""
@@ -39,6 +52,21 @@ class Config:
             with open(self.config_file, 'r') as f:
                 config_data = json.load(f)
 
+            # Load rate limit windows
+            rate_limit_data = config_data.get('rate_limits', [])
+            rate_limit_windows = []
+            for window in rate_limit_data:
+                rate_limit_windows.append(
+                    RateLimitWindow(
+                        duration=window['duration'],
+                        max_requests=window['max_requests']
+                    )
+                )
+            
+            # Use default rate limits if none configured
+            if not rate_limit_windows:
+                rate_limit_windows = DEFAULT_RATE_LIMIT_WINDOWS
+
             # Load accounts configuration
             accounts_data = config_data.get('accounts', [])
             self.accounts = []
@@ -52,11 +80,24 @@ class Config:
                         username=proxy.get("username"),
                         password=proxy.get("password")
                     )
+                    
+                # Get account-specific rate limits if defined, otherwise use global
+                account_rate_limits = None
+                if "rate_limits" in account_data:
+                    account_rate_limits = [
+                        RateLimitWindow(
+                            duration=window['duration'],
+                            max_requests=window['max_requests']
+                        )
+                        for window in account_data['rate_limits']
+                    ]
+
                 self.accounts.append(
                     AccountConfig(
                         refresh_token=account_data["token"],
                         username=account_data["id"],
-                        proxy=proxy_config
+                        proxy=proxy_config,
+                        rate_limit_windows=account_rate_limits or rate_limit_windows
                     )
                 )
 

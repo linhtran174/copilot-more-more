@@ -2,6 +2,7 @@
 config.json
 node_modules
 logs
+config.temp
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
@@ -132,3 +133,4 @@ cython_debug/
 .pytest-kind
 
 .bin/
+.aider*

@@ -71,7 +71,7 @@ class CopilotProxy:
                 else ""
             )
             account = account_manager.get_account_by_token(token) if token else None
-            account_id = account.id if account else "unknown"
+            account_id = account.username if account else "unknown"
 
             ctx.log.info(
                 f"Request to {flow.request.pretty_url} using account: {account_id}"

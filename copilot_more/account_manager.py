@@ -9,7 +9,7 @@ from aiohttp import ClientSession
 from aiohttp_socks import ProxyConnector
 
 from copilot_more.logger import logger
-from copilot_more.config import account_configs, ProxyConfig
+from copilot_more.config import account_configs, ProxyConfig, RateLimitWindow, DEFAULT_RATE_LIMIT_WINDOWS
 
 
 @dataclass
@@ -28,7 +28,7 @@ class AccessToken:
 class AccountInfo:
     """Manages a GitHub Copilot account's refresh and access tokens."""
 
-    def __init__(self, refresh_token: str, username: str, proxy_config: Optional[ProxyConfig] = None):
+    def __init__(self, refresh_token: str, username: str, proxy_config: Optional[ProxyConfig] = None, rate_limit_windows: Optional[List[RateLimitWindow]] = None):
         self.username = username
         self.refresh_token = refresh_token
         self.rate_limited_until = 0
@@ -36,6 +36,8 @@ class AccountInfo:
         self.access_token: Optional[AccessToken] = None
         self.proxy_config = proxy_config
         self.last_used = 0
+        self.rate_limit_windows = rate_limit_windows or DEFAULT_RATE_LIMIT_WINDOWS
+        self.request_timestamps: List[float] = []
 
     def update_access_token(self, token: str, expires_at: int):
         """Update the account's access token."""
@@ -52,11 +54,42 @@ class AccountInfo:
         self.rate_limited_until = time.time() + duration
         logger.warning(f"Account {self.username} marked as rate limited for {duration} seconds")
 
+    def record_request(self):
+        """Record a new API request."""
+        current_time = time.time()
+        self.request_timestamps.append(current_time)
+        
+        # Remove timestamps outside the largest window to prevent unbounded growth
+        max_window = max(window.duration for window in self.rate_limit_windows)
+        cutoff_time = current_time - max_window
+        self.request_timestamps = [ts for ts in self.request_timestamps if ts > cutoff_time]
+
     def is_rate_limited(self) -> bool:
-        """Check if token is currently rate limited."""
-        if self.rate_limited_until == 0:
-            return False
-        return time.time() < self.rate_limited_until
+        """Check if account is rate limited by any window or external limit."""
+        current_time = time.time()
+        
+        # Check external rate limit first (from API responses)
+        if self.rate_limited_until > 0 and current_time < self.rate_limited_until:
+            return True
+
+        # Clean up old timestamps
+        max_window = max(window.duration for window in self.rate_limit_windows)
+        cutoff_time = current_time - max_window
+        self.request_timestamps = [ts for ts in self.request_timestamps if ts > cutoff_time]
+
+        # Check each rate limit window
+        for window in self.rate_limit_windows:
+            window_start = current_time - window.duration
+            requests_in_window = sum(1 for ts in self.request_timestamps if ts > window_start)
+            
+            if requests_in_window >= window.max_requests:
+                logger.warning(
+                    f"Account {self.username} rate limited: {requests_in_window} requests "
+                    f"in {window.duration}s window (max: {window.max_requests})"
+                )
+                return True
+
+        return False
         
     async def get_access_token(self) -> Optional[Dict[str, str]]:
         """Get the current access token if available."""
@@ -141,12 +174,13 @@ class AccountManager:
         self.current_index = 0
         self.lock = threading.Lock()
 
-    def add_account(self, refresh_token: str, username: str, proxy_config: Optional[ProxyConfig] = None):
-        """Add a new account using its refresh token and optional proxy configuration."""
+    def add_account(self, refresh_token: str, username: str, proxy_config: Optional[ProxyConfig] = None, rate_limit_windows: Optional[List[RateLimitWindow]] = None):
+        """Add a new account using its refresh token, proxy configuration, and rate limit windows."""
         with self.lock:
             # Check if account already exists
             if not any(acc.refresh_token == refresh_token for acc in self.accounts):
-                self.accounts.append(AccountInfo(refresh_token, username, proxy_config))
+                account = AccountInfo(refresh_token, username, proxy_config, rate_limit_windows)
+                self.accounts.append(account)
                 logger.info(f"Added new account {username} to manager")
 
     def get_next_usable_account(self) -> Optional[AccountInfo]:
@@ -196,7 +230,12 @@ if not account_configs:
     logger.error("No account configurations available - accounts cannot be initialized")
 else:
     for config in account_configs:
-        account_manager.add_account(config.refresh_token, config.username, config.proxy)
+        account_manager.add_account(
+            refresh_token=config.refresh_token,
+            username=config.username,
+            proxy_config=config.proxy,
+            rate_limit_windows=config.rate_limit_windows
+        )
     logger.info(f"Successfully initialized {len(account_manager.accounts)} accounts")
 
 if not account_manager.accounts:

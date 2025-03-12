@@ -9,12 +9,36 @@
         "port": 39165,
         "username": "VN731058",
         "password": "bXaV5v6I"
-      }
+      },
+      "rate_limits": [
+        {
+          "duration": 10,
+          "max_requests": 3
+        },
+        {
+          "duration": 60,
+          "max_requests": 15
+        }
+      ]
     },
     {
       "id": "copilot.github.gdd8@gmail.com",
       "password": "J/2794sdsd",
       "token": "gho_zb9t8mm6qZY0NtXJQF6k4K3sdsdsd3ltQHi"
+    }
+  ],
+  "rate_limits": [
+    {
+      "duration": 10,
+      "max_requests": 2
+    },
+    {
+      "duration": 60,
+      "max_requests": 10
+    },
+    {
+      "duration": 3600,
+      "max_requests": 40
     }
   ],
   "token_refresh_interval": 1000,
