@@ -16,7 +16,7 @@ if [ ! -f "config.json" ]; then
 fi
 
 # Read the accounts from config.json
-accounts=$(jq -r '.accounts[] | .id' config.json)
+accounts=$(jq -r '.providers[] | select(.type == "github-copilot") | .accounts[] | .id' config.json)
 account_count=$(echo "$accounts" | wc -l)
 
 if [ "$account_count" -eq 0 ]; then
@@ -129,7 +129,7 @@ if [ -z "$access_token" ]; then
 fi
 
 # Update the token in config.json
-jq --arg index "$account_index" --arg token "$access_token" '.accounts[$index | tonumber].token = $token' config.json > config.tmp && mv config.tmp config.json
+jq --arg index "$account_index" --arg token "$access_token" '.providers[] | select(.type == "github-copilot") | .accounts[$index | tonumber].token = $token' config.json > config.tmp && mv config.tmp config.json
 
 if [ $? -eq 0 ]; then
     echo -e "\nToken has been successfully updated for account: $account_id"
