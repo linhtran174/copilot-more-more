@@ -221,22 +221,36 @@ class AccountManager:
             account.mark_rate_limited()
             logger.warning(f"Account {account.username} marked as rate limited due to 429 response")
 
+    def has_usable_accounts(self) -> bool:
+        """Check if there are any usable accounts without changing the next usable account."""
+        # Save the current index so we can restore it after checking
+        original_index = self.current_index
+        
+        # Try to find a usable account
+        for _ in range(len(self.accounts)):
+            account = self.accounts[self.current_index]
+            if account.is_usable():
+                # Found a usable account, restore the original index and return True
+                self.current_index = original_index
+                return True
+                
+            # Move to next account index
+            self.current_index = (self.current_index + 1) % len(self.accounts)
+        
+        # No usable account found, restore the original index and return False
+        self.current_index = original_index
+        return False
 
-# Global account manager instance
-account_manager = AccountManager()
-
-# Initialize accounts from config
-if not account_configs:
-    logger.error("No account configurations available - accounts cannot be initialized")
-else:
-    for config in account_configs:
-        account_manager.add_account(
-            refresh_token=config.refresh_token,
-            username=config.username,
-            proxy_config=config.proxy,
-            rate_limit_windows=config.rate_limit_windows
-        )
-    logger.info(f"Successfully initialized {len(account_manager.accounts)} accounts")
-
-if not account_manager.accounts:
-    logger.error("No accounts were initialized - service may not function correctly")
+    @classmethod
+    def create_from_config(cls, accounts_config) -> 'AccountManager':
+        """Create an AccountManager instance from a list of account configs."""
+        manager = cls()
+        for config in accounts_config:
+            manager.add_account(
+                refresh_token=config.refresh_token,
+                username=config.username,
+                proxy_config=config.proxy,
+                rate_limit_windows=config.rate_limit_windows
+            )
+        logger.info(f"Successfully initialized {len(manager.accounts)} accounts")
+        return manager

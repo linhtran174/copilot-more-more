@@ -23,15 +23,25 @@ class AddCreditsRequest(BaseModel):
     """Request model for adding credits."""
     amount: float
 
-def get_api_key(x_api_key: Optional[str] = Header(None)) -> str:
-    """Validate API key from header."""
-    if not x_api_key:
+def get_api_key(authorization: Optional[str] = Header(None)) -> str:
+    """Validate API key from Authorization header (Bearer token)."""
+    if not authorization:
         raise HTTPException(
             status_code=401,
-            detail="API key required"
+            detail="Authorization header required"
         )
     
-    key_info = api_key_manager.get_key_info(x_api_key)
+    # Check if it starts with "Bearer "
+    if not authorization.startswith("Bearer "):
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid authorization format. Must be 'Bearer {token}'"
+        )
+    
+    # Extract the token part
+    api_key = authorization.replace("Bearer ", "", 1)
+    
+    key_info = api_key_manager.get_key_info(api_key)
     if not key_info:
         raise HTTPException(
             status_code=401,
@@ -44,7 +54,7 @@ def get_api_key(x_api_key: Optional[str] = Header(None)) -> str:
             detail="API key is disabled"
         )
     
-    return x_api_key
+    return api_key
 
 @router.post("/api-keys", response_model=ApiKeyResponse)
 async def create_api_key(initial_credits: float = 0.0):
@@ -69,8 +79,9 @@ async def create_api_key(initial_credits: float = 0.0):
         raise HTTPException(status_code=500, detail="Error creating API key")
 
 @router.get("/balance", response_model=BalanceResponse)
-async def get_balance(api_key: str = Header(..., alias="X-API-Key")):
+async def get_balance(authorization: Optional[str] = Header(None)):
     """Get current balance and usage for an API key."""
+    api_key = get_api_key(authorization)
     key_info = api_key_manager.get_key_info(api_key)
     if not key_info:
         raise HTTPException(status_code=401, detail="Invalid API key")
@@ -81,11 +92,12 @@ async def get_balance(api_key: str = Header(..., alias="X-API-Key")):
     )
 
 @router.post("/add-credits")
-async def add_credits(request: AddCreditsRequest, api_key: str = Header(..., alias="X-API-Key")):
+async def add_credits(request: AddCreditsRequest, authorization: Optional[str] = Header(None)):
     """Add credits to an API key."""
     if request.amount <= 0:
         raise HTTPException(status_code=400, detail="Amount must be positive")
     
+    api_key = get_api_key(authorization)
     success = api_key_manager.add_credits(api_key, request.amount)
     if not success:
         raise HTTPException(status_code=401, detail="Invalid API key")
@@ -100,16 +112,18 @@ async def add_credits(request: AddCreditsRequest, api_key: str = Header(..., ali
     }
 
 @router.post("/disable")
-async def disable_api_key(api_key: str = Header(..., alias="X-API-Key")):
+async def disable_api_key(authorization: Optional[str] = Header(None)):
     """Disable an API key."""
+    api_key = get_api_key(authorization)
     success = api_key_manager.disable_key(api_key)
     if not success:
         raise HTTPException(status_code=401, detail="Invalid API key")
     return {"message": "API key disabled"}
 
 @router.post("/enable")
-async def enable_api_key(api_key: str = Header(..., alias="X-API-Key")):
+async def enable_api_key(authorization: Optional[str] = Header(None)):
     """Enable an API key."""
+    api_key = get_api_key(authorization)
     success = api_key_manager.enable_key(api_key)
     if not success:
         raise HTTPException(status_code=401, detail="Invalid API key")
