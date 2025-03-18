@@ -23,7 +23,7 @@ class ApiKeyInfo:
 
     def deduct_tokens(self, tokens_used: int) -> bool:
         """Deduct tokens from credits and update total usage."""
-        credit_cost = tokens_used / 1000  # 1 credit = 1000 tokens
+        credit_cost = tokens_used / 500000  # $2 / 1M tokens
         if self.credits >= credit_cost:
             self.credits -= credit_cost
             self.total_tokens_used += tokens_used
