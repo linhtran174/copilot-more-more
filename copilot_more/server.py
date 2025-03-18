@@ -13,7 +13,7 @@ from copilot_more.logger import logger
 from copilot_more.config import request_timeout, config
 from copilot_more.utils import StringSanitizer
 from copilot_more.api_key_manager import api_key_manager
-from copilot_more.api_routes import router as api_router
+from copilot_more.api_routes import router as api_router, get_api_key
 from copilot_more.providers import provider_manager
 
 sanitizer = StringSanitizer()
@@ -87,9 +87,14 @@ def preprocess_request_body(request_body: dict) -> dict:
 
 
 @app.get("/models")
-async def list_models():
+async def list_models(
+    authorization: Optional[str] = Header(None)
+):
     """Proxies models request to the first available provider."""
     logger.info("Received models request")
+    
+    # Validate API key
+    api_key = get_api_key(authorization)
     
     try:
         # Make a models request using the provider manager
@@ -97,7 +102,8 @@ async def list_models():
             request_body={},
             endpoint="models",
             accept_header="application/json",
-            stream=False
+            stream=False,
+            api_key=api_key  # Pass API key for token accounting
         )
         
         if result is None:
@@ -114,7 +120,11 @@ async def list_models():
 @app.post("/chat/completions")
 async def proxy_chat_completions(
     request: Request,
+    authorization: Optional[str] = Header(None)
 ):
+    # Validate API key
+    api_key = get_api_key(authorization)
+    
     request_body = await request.json()
     
     # Estimate token usage for credit check
@@ -128,6 +138,13 @@ async def proxy_chat_completions(
     
     # Add buffer for response tokens
     estimated_tokens += request_body.get("max_tokens", 1000)
+    
+    # Check if user has enough credits
+    if not api_key_manager.validate_key(api_key, estimated_tokens):
+        raise HTTPException(
+            status_code=402,
+            detail="Insufficient credits for this request"
+        )
     
     # Filter out system messages from the log
     log_request = request_body.copy()
@@ -153,13 +170,19 @@ async def proxy_chat_completions(
             request_body=request_body,
             endpoint=None,  # Default endpoint (chat/completions)
             accept_header="text/event-stream" if stream_mode else "application/json",
-            stream=stream_mode
+            stream=stream_mode,
+            api_key=api_key  # Pass API key for token accounting
         )
         
         if result is None:
             raise HTTPException(503, "No provider available to fulfill the request")
             
         if stream_mode:
+            # For streaming responses, deduct based on estimated tokens
+            # since we can't know the exact usage until after streaming completes
+            api_key_manager.deduct_tokens(api_key, estimated_tokens)
+            logger.info(f"Deducted {estimated_tokens} estimated tokens from API key {api_key} for streaming request")
+            
             # Return a streaming response
             logger.info("Returning streaming response")
             response = StreamingResponse(
@@ -179,6 +202,18 @@ async def proxy_chat_completions(
         else:
             # Return the JSON response
             logger.info("Returning JSON response")
+            
+            # Deduct tokens based on actual usage if available
+            response_tokens = estimated_tokens  # Default to our estimate
+            
+            # Check if result has usage information
+            if isinstance(result, dict) and "usage" in result and "total_tokens" in result["usage"]:
+                response_tokens = result["usage"]["total_tokens"]
+            
+            # Deduct tokens from the user's credits
+            api_key_manager.deduct_tokens(api_key, response_tokens)
+            logger.info(f"Deducted {response_tokens} tokens from API key {api_key}")
+            
             return result
 
     except ValueError as e:
@@ -189,4 +224,3 @@ async def proxy_chat_completions(
     except Exception as e:
         logger.error(f"Error in request: {str(traceback.format_exc())}")
         raise HTTPException(500, f"Error processing request: {str(e)}")
-

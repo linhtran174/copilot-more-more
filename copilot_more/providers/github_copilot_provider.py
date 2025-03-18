@@ -136,13 +136,8 @@ class GithubCopilotProvider(BaseProvider):
                                 yield chunk
                                 await asyncio.sleep(0)  # Yield control to event loop
                             
-                            # Update token usage at the end of stream
-                            if api_key:
-                                try:
-                                    api_key_manager.deduct_tokens(api_key, total_tokens)
-                                    logger.info(f"Deducted {total_tokens} tokens from API key")
-                                except Exception as e:
-                                    logger.error(f"Error deducting tokens: {str(e)}")
+                            # We only count tokens, server handles deduction
+                            logger.info(f"Streaming response used approximately {total_tokens} tokens")
                             
                             # Ensure final completion marker if not present
                             if not chunk.endswith(b"data: [DONE]\n\n"):
@@ -185,13 +180,8 @@ class GithubCopilotProvider(BaseProvider):
                                 # Rough estimation: 4 chars = 1 token
                                 total_tokens += len(choice["message"]["content"]) // 4
                     
-                    # Update token usage
-                    if api_key:
-                        try:
-                            api_key_manager.deduct_tokens(api_key, total_tokens)
-                            logger.info(f"Deducted {total_tokens} tokens from API key")
-                        except Exception as e:
-                            logger.error(f"Error deducting tokens: {str(e)}")
+                    # Log token usage but don't deduct (server handles that)
+                    logger.info(f"Non-streaming response used approximately {total_tokens} tokens")
                     
                     logger.info("Successfully completed request")
                     return resp_text
