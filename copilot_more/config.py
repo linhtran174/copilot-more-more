@@ -62,6 +62,18 @@ class OpenAICompatibleProviderConfig:
     rate_limit_windows: List[RateLimitWindow] = field(default_factory=lambda: DEFAULT_RATE_LIMIT_WINDOWS.copy())
     model_mapping: Dict[str, str] = field(default_factory=dict)
 
+@dataclass
+class MasterKeyConfig:
+    """Configuration for a master API key."""
+    user_id: str
+    enabled: bool = True
+    description: str = ""
+
+@dataclass
+class ApiKeyConfig:
+    """Configuration for API keys."""
+    master_keys: List[MasterKeyConfig] = field(default_factory=list)
+
 class Config:
     """Main configuration class."""
     def __init__(self, config_file: str = "config.json"):
@@ -70,6 +82,8 @@ class Config:
         self.providers: List[Union[GithubCopilotProviderConfig, OpenAICompatibleProviderConfig]] = []
         self.request_timeout: int = 60  # default timeout
         self.record_traffic: bool = False  # default record traffic setting
+        self.master_key: Optional[str] = None
+        self.system_models: Dict[str, Dict[str, Any]] = {}  # System-provided models configuration
         self._load_config()
 
     def _load_config(self) -> None:
@@ -109,8 +123,10 @@ class Config:
             # Load other settings
             self.request_timeout = config_data.get('request_timeout', 60)
             self.record_traffic = config_data.get('record_traffic', False)
+            self.master_key = config_data.get('master_key')
+            self.system_models = config_data.get('system_models', {})
 
-            logger.info(f"Successfully loaded configuration with {len(self.providers)} providers")
+            logger.info(f"Successfully loaded configuration with {len(self.providers)} providers and {len(self.system_models)} system models")
 
         except Exception as e:
             logger.error(f"Error loading config: {e}")

@@ -4,6 +4,7 @@ from typing import Dict, Optional
 import secrets
 import threading
 from copilot_more.logger import logger
+from copilot_more.config import config
 
 @dataclass
 class ApiKeyInfo:
@@ -17,12 +18,20 @@ class ApiKeyInfo:
 
     def has_sufficient_credits(self, estimated_tokens: int = 1000) -> bool:
         """Check if key has sufficient credits for the estimated token usage."""
-        # Assuming 1 credit = 1000 tokens, and we want to prevent going negative
+        # If this is the master key, always allow
+        if hasattr(config, 'master_key') and self.key == config.master_key:
+            return True
+        # Regular key validation
         estimated_cost = estimated_tokens / 1000
         return self.credits >= estimated_cost and self.enabled
 
     def deduct_tokens(self, tokens_used: int) -> bool:
         """Deduct tokens from credits and update total usage."""
+        # If this is the master key, don't deduct tokens
+        if hasattr(config, 'master_key') and self.key == config.master_key:
+            self.total_tokens_used += tokens_used
+            return True
+        # Regular token deduction
         credit_cost = tokens_used / 500000  # $2 / 1M tokens
         if self.credits >= credit_cost:
             self.credits -= credit_cost
@@ -53,6 +62,8 @@ class ApiKeyManager:
 
     def get_key_info(self, api_key: str) -> Optional[ApiKeyInfo]:
         """Get information about an API key."""
+        if hasattr(config, 'master_key') and api_key == config.master_key:
+            return ApiKeyInfo(key="master", user_id="master", created_at=0, credits=0, total_tokens_used=0, enabled=True)
         return self.api_keys.get(api_key)
 
     def add_credits(self, api_key: str, amount: float) -> bool:
@@ -66,6 +77,8 @@ class ApiKeyManager:
 
     def validate_key(self, api_key: str, estimated_tokens: int = 1000) -> bool:
         """Validate an API key and check if it has sufficient credits."""
+        if hasattr(config, 'master_key') and api_key == config.master_key:
+            return True
         if key_info := self.api_keys.get(api_key):
             return key_info.has_sufficient_credits(estimated_tokens)
         return False
