@@ -90,28 +90,37 @@ def preprocess_request_body(request_body: dict) -> dict:
 async def list_models(
     authorization: Optional[str] = Header(None)
 ):
-    """Proxies models request to the first available provider."""
+    """Returns list of available models configured in the system."""
     logger.info("Received models request")
     
     # Validate API key
     api_key = get_api_key(authorization)
     
     try:
-        # Make a models request using the provider manager
-        result = await provider_manager.make_request(
-            request_body={},
-            endpoint="models",
-            accept_header="application/json",
-            stream=False,
-            api_key=api_key  # Pass API key for token accounting
-        )
+        # Get system models from config
+        system_models = config.system_models or {}
         
-        if result is None:
-            raise HTTPException(503, "No provider available to fulfill the request")
-            
-        return result
-    except HTTPException:
-        raise
+        # Format models in OpenAI-compatible format
+        models_list = []
+        for model_id, model_info in system_models.items():
+            models_list.append({
+                "id": model_id,
+                "object": "model",
+                "created": 1677610602,  # Generic timestamp
+                "owned_by": "system",
+                "permission": [],
+                "root": model_id,
+                "parent": None,
+                "context_window": model_info.get("context_window", 4096),
+                "pricing": model_info.get("pricing", {"input": 0, "output": 0}),
+                "name": model_info.get("name", model_id),
+                "description": model_info.get("description", "")
+            })
+        
+        return {
+            "object": "list",
+            "data": models_list
+        }
     except Exception as e:
         logger.error(f"Unexpected error in models endpoint: {str(e)}")
         raise HTTPException(500, f"Error fetching models: {str(e)}")
